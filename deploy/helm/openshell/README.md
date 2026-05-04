@@ -58,6 +58,12 @@ See [`values.yaml`](values.yaml) for source defaults. Selected overlays:
 - [`ci/values-cert-manager.yaml`](ci/values-cert-manager.yaml) - cert-manager integration
 - [`ci/values-keycloak.yaml`](ci/values-keycloak.yaml) - Keycloak OIDC integration
 
+`/readyz` reflects a cached database health state refreshed by an in-process
+background task (interval and per-check timeout are hardcoded gateway-side).
+Probe response latency is sub-millisecond, so no chart-level tuning of the
+readiness check is needed - adjust `probes.readiness.*` like any standard
+Kubernetes readiness probe.
+
 ## PKI bootstrap
 
 By default, a pre-install/pre-upgrade hook Job runs `openshell-gateway generate-certs`
@@ -118,7 +124,7 @@ cert-manager alternative.
 | probes.readiness.failureThreshold | int | `3` | Readiness probe failure threshold before the pod is marked not ready. |
 | probes.readiness.initialDelaySeconds | int | `1` | Readiness probe initial delay, in seconds. |
 | probes.readiness.periodSeconds | int | `2` | Readiness probe period, in seconds. |
-| probes.readiness.timeoutSeconds | int | `1` | Readiness probe timeout, in seconds. |
+| probes.readiness.timeoutSeconds | int | `2` | Readiness probe timeout, in seconds. |
 | probes.startup.failureThreshold | int | `30` | Startup probe failure threshold before the container is killed. |
 | probes.startup.periodSeconds | int | `2` | Startup probe period, in seconds. |
 | probes.startup.timeoutSeconds | int | `1` | Startup probe timeout, in seconds. |

@@ -130,6 +130,8 @@ openshell status
 openshell gateway info
 ```
 
+Gateways expose `/healthz` for process liveness and `/readyz` for dependency-aware readiness on the health port. `/readyz` reflects the latest result of a background database health check.
+
 For Docker-backed local gateways, inspect Docker and the gateway process or container started by your local workflow:
 
 ```shell

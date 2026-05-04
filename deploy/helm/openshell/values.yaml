@@ -107,7 +107,7 @@ probes:
     # -- Readiness probe period, in seconds.
     periodSeconds: 2
     # -- Readiness probe timeout, in seconds.
-    timeoutSeconds: 1
+    timeoutSeconds: 2
     # -- Readiness probe failure threshold before the pod is marked not ready.
     failureThreshold: 3
 

@@ -149,6 +149,15 @@ helm upgrade --install openshell \
   --values my-values.yaml
 ```
 
+## Probes
+
+The gateway exposes `/healthz` for process liveness and `/readyz` for dependency-aware readiness on the health port. The Helm chart wires both into Kubernetes probes:
+
+- `startupProbe` and `livenessProbe` use `/healthz`.
+- `readinessProbe` uses `/readyz`, which reflects the latest result of an in-process background database check.
+
+Handler responses are sub-millisecond, so the readiness probe never races the kubelet's `timeoutSeconds`. No gateway-side tuning is exposed: the background check interval and per-check timeout are hardcoded to safe defaults. Adjust `probes.readiness.*` like any standard Kubernetes readiness probe.
+
 ## Next Steps
 
 - To enable automatic certificate rotation with cert-manager, refer to [Managing Certificates](/kubernetes/managing-certificates).
