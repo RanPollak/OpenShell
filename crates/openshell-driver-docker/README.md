@@ -30,7 +30,7 @@ contract:
 | `cap_add` | Grants supervisor-only capabilities required for namespace setup and process inspection. |
 | `apparmor=unconfined` | Avoids Docker's default profile blocking required mount operations. |
 | `restart_policy = unless-stopped` | Keeps managed sandboxes resumable across daemon or gateway restarts. |
-| CDI GPU request | Uses the sandbox `gpu_device` value when set; otherwise requests all NVIDIA GPUs when the sandbox spec asks for GPU support and daemon CDI support is detected. |
+| CDI GPU request | Uses explicit placement GPU device IDs when set; otherwise requests all NVIDIA GPUs for GPU placement requests when daemon CDI support is detected. |
 
 The agent child process does not retain these supervisor privileges.
 

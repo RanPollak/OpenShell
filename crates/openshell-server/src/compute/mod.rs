@@ -18,7 +18,8 @@ use futures::{Stream, StreamExt};
 use openshell_core::proto::compute::v1::{
     CreateSandboxRequest, DeleteSandboxRequest, DriverCondition, DriverPlatformEvent,
     DriverResourceRequirements, DriverSandbox, DriverSandboxSpec, DriverSandboxStatus,
-    DriverSandboxTemplate, GetCapabilitiesRequest, GetSandboxRequest, ListSandboxesRequest,
+    DriverSandboxTemplate, GetCapabilitiesRequest, GetSandboxRequest, GpuSpec as DriverGpuSpec,
+    ListSandboxesRequest, ResourceRequirements as DriverSandboxResourceRequirements,
     ValidateSandboxCreateRequest, WatchSandboxesEvent, WatchSandboxesRequest,
     compute_driver_client::ComputeDriverClient, compute_driver_server::ComputeDriver,
     watch_sandboxes_event,
@@ -1227,8 +1228,14 @@ fn driver_sandbox_spec_from_public(spec: &SandboxSpec) -> DriverSandboxSpec {
             .template
             .as_ref()
             .map(driver_sandbox_template_from_public),
-        gpu: spec.gpu,
-        gpu_device: spec.gpu_device.clone(),
+        placement: spec
+            .placement
+            .as_ref()
+            .map(|placement| DriverSandboxResourceRequirements {
+                gpu: placement.gpu.as_ref().map(|gpu| DriverGpuSpec {
+                    device_ids: gpu.device_ids.clone(),
+                }),
+            }),
     }
 }
 
@@ -1579,7 +1586,9 @@ fn derive_phase(status: Option<&DriverSandboxStatus>) -> SandboxPhase {
 }
 
 fn rewrite_user_facing_conditions(status: &mut Option<SandboxStatus>, spec: Option<&SandboxSpec>) {
-    let gpu_requested = spec.is_some_and(|sandbox_spec| sandbox_spec.gpu);
+    let gpu_requested = spec
+        .and_then(|sandbox_spec| sandbox_spec.placement.as_ref())
+        .is_some_and(|placement| placement.gpu.is_some());
     if !gpu_requested {
         return;
     }
@@ -1741,6 +1750,7 @@ mod tests {
         CreateSandboxResponse, DeleteSandboxResponse, GetCapabilitiesResponse, GetSandboxRequest,
         GetSandboxResponse, StopSandboxRequest, StopSandboxResponse, ValidateSandboxCreateResponse,
     };
+    use openshell_core::proto::{GpuSpec, ResourceRequirements};
     use std::collections::HashMap;
     use std::sync::Arc;
     use tokio::sync::{mpsc, oneshot};
@@ -1755,6 +1765,30 @@ mod tests {
         prost_types::Value {
             kind: Some(prost_types::value::Kind::NumberValue(value)),
         }
+    }
+
+    #[test]
+    fn driver_sandbox_spec_from_public_preserves_gpu_request_device_ids() {
+        let public = SandboxSpec {
+            placement: Some(ResourceRequirements {
+                gpu: Some(GpuSpec {
+                    device_ids: vec!["nvidia.com/gpu=0".to_string()],
+                }),
+            }),
+            ..Default::default()
+        };
+
+        let driver = driver_sandbox_spec_from_public(&public);
+
+        assert_eq!(
+            driver
+                .placement
+                .expect("driver resource requirements should be present")
+                .gpu
+                .expect("driver GPU request should be present")
+                .device_ids,
+            vec!["nvidia.com/gpu=0".to_string()]
+        );
     }
 
     fn struct_value(
@@ -2207,7 +2241,9 @@ mod tests {
         rewrite_user_facing_conditions(
             &mut status,
             Some(&SandboxSpec {
-                gpu: true,
+                placement: Some(ResourceRequirements {
+                    gpu: Some(GpuSpec { device_ids: vec![] }),
+                }),
                 ..Default::default()
             }),
         );
@@ -2239,7 +2275,7 @@ mod tests {
         rewrite_user_facing_conditions(
             &mut status,
             Some(&SandboxSpec {
-                gpu: false,
+                placement: None,
                 ..Default::default()
             }),
         );
@@ -2466,7 +2502,9 @@ mod tests {
 
         let sandbox = Sandbox {
             spec: Some(SandboxSpec {
-                gpu: true,
+                placement: Some(ResourceRequirements {
+                    gpu: Some(GpuSpec { device_ids: vec![] }),
+                }),
                 ..Default::default()
             }),
             ..sandbox_record("sb-1", "sandbox-a", SandboxPhase::Provisioning)
@@ -2489,7 +2527,13 @@ mod tests {
             SandboxPhase::try_from(stored.phase).unwrap(),
             SandboxPhase::Ready
         );
-        assert!(stored.spec.as_ref().is_some_and(|spec| spec.gpu));
+        assert!(
+            stored
+                .spec
+                .as_ref()
+                .and_then(|spec| spec.placement.as_ref())
+                .is_some_and(|placement| placement.gpu.is_some())
+        );
     }
 
     #[tokio::test]

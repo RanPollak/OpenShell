@@ -101,6 +101,8 @@ def gpu_sandbox_spec() -> datamodel_pb2.SandboxSpec:
     # override (e.g. a locally-built or registry-mirrored image).
     image = os.environ.get("OPENSHELL_E2E_GPU_IMAGE", "")
     return datamodel_pb2.SandboxSpec(
-        gpu=True,
+        placement=datamodel_pb2.ResourceRequirements(
+            gpu=datamodel_pb2.GPUSpec(),
+        ),
         template=datamodel_pb2.SandboxTemplate(image=image),
     )

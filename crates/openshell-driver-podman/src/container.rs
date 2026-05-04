@@ -353,8 +353,12 @@ fn build_resource_limits(sandbox: &DriverSandbox) -> ResourceLimits {
 
 /// Build CDI GPU device list if GPU is requested.
 fn build_devices(sandbox: &DriverSandbox) -> Option<Vec<LinuxDevice>> {
-    let spec = sandbox.spec.as_ref()?;
-    cdi_gpu_device_ids(spec.gpu, &spec.gpu_device).map(|device_ids| {
+    let gpu = sandbox
+        .spec
+        .as_ref()
+        .and_then(|spec| spec.placement.as_ref())
+        .and_then(|placement| placement.gpu.as_ref());
+    cdi_gpu_device_ids(gpu).map(|device_ids| {
         device_ids
             .into_iter()
             .map(|path| LinuxDevice { path })
@@ -731,11 +735,15 @@ mod tests {
     #[test]
     fn container_spec_maps_empty_gpu_request_to_all_cdi_device() {
         use openshell_core::config::CDI_GPU_DEVICE_ALL;
-        use openshell_core::proto::compute::v1::DriverSandboxSpec;
+        use openshell_core::proto::compute::v1::{
+            DriverSandboxSpec, GpuSpec, ResourceRequirements,
+        };
 
         let mut sandbox = test_sandbox("test-id", "test-name");
         sandbox.spec = Some(DriverSandboxSpec {
-            gpu: true,
+            placement: Some(ResourceRequirements {
+                gpu: Some(GpuSpec { device_ids: vec![] }),
+            }),
             ..Default::default()
         });
         let config = test_config();
@@ -748,13 +756,21 @@ mod tests {
     }
 
     #[test]
-    fn container_spec_passes_explicit_cdi_device_id_through() {
-        use openshell_core::proto::compute::v1::DriverSandboxSpec;
+    fn container_spec_passes_explicit_cdi_device_ids_through() {
+        use openshell_core::proto::compute::v1::{
+            DriverSandboxSpec, GpuSpec, ResourceRequirements,
+        };
 
         let mut sandbox = test_sandbox("test-id", "test-name");
         sandbox.spec = Some(DriverSandboxSpec {
-            gpu: true,
-            gpu_device: "nvidia.com/gpu=0".to_string(),
+            placement: Some(ResourceRequirements {
+                gpu: Some(GpuSpec {
+                    device_ids: vec![
+                        "nvidia.com/gpu=0".to_string(),
+                        "nvidia.com/gpu=1".to_string(),
+                    ],
+                }),
+            }),
             ..Default::default()
         });
         let config = test_config();
@@ -763,6 +779,10 @@ mod tests {
         assert_eq!(
             spec["devices"][0]["path"].as_str(),
             Some("nvidia.com/gpu=0")
+        );
+        assert_eq!(
+            spec["devices"][1]["path"].as_str(),
+            Some("nvidia.com/gpu=1")
         );
     }
 

@@ -271,12 +271,22 @@ message SandboxSpec {
   openshell.sandbox.v1.SandboxPolicy policy = 7;
   // Provider names to attach to this sandbox.
   repeated string providers = 8;
-  // Request NVIDIA GPU resources for this sandbox.
-  bool gpu = 9;
-  // Optional PCI BDF address (e.g. "0000:2d:00.0") or device index
-  // (e.g. "0", "1"). When empty with gpu=true, the driver assigns the
-  // first available GPU.
-  string gpu_device = 10;
+  // Optional resource requirements for the sandbox workload.
+  ResourceRequirements resource_requirements = 9;
+}
+
+// Public resource requirements for selecting compatible compute resources.
+message ResourceRequirements {
+  // Request GPU resources for this sandbox. Presence indicates a GPU request.
+  GPUSpec gpu = 1;
+}
+
+// Public GPU resource details. Device identifiers are interpreted by the
+// selected compute driver.
+message GPUSpec {
+  // Optional driver-native device identifiers. Empty means the driver chooses
+  // its default GPU assignment behavior.
+  repeated string device_ids = 1;
 }
 
 // Public sandbox template mapped onto compute-driver template inputs.
