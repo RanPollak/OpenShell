@@ -201,12 +201,29 @@ impl PodmanComputeDriver {
         let gpu = sandbox
             .spec
             .as_ref()
-            .and_then(|spec| spec.placement.as_ref())
-            .and_then(|placement| placement.gpu.as_ref());
+            .and_then(|spec| spec.resource_requirements.as_ref())
+            .and_then(|requirements| requirements.gpu.as_ref());
         Self::validate_gpu_request(gpu)
     }
 
     fn validate_gpu_request(gpu: Option<&GpuSpec>) -> Result<(), ComputeDriverError> {
+        if let Some(gpu) = gpu {
+            if gpu.count.is_some() && !gpu.device_ids.is_empty() {
+                return Err(ComputeDriverError::Precondition(
+                    "gpu.count is mutually exclusive with gpu.device_ids".to_string(),
+                ));
+            }
+            if gpu.count == Some(0) {
+                return Err(ComputeDriverError::Precondition(
+                    "gpu.count must be greater than 0".to_string(),
+                ));
+            }
+            if gpu.count.is_some() {
+                return Err(ComputeDriverError::Precondition(
+                    "podman compute driver does not support GPU count requests".to_string(),
+                ));
+            }
+        }
         if gpu.is_some() && !Self::has_gpu_capacity() {
             return Err(ComputeDriverError::Precondition(
                 "GPU sandbox requested, but no NVIDIA GPU devices are available.".to_string(),
@@ -227,6 +244,7 @@ impl PodmanComputeDriver {
                 "sandbox id is required".into(),
             ));
         }
+        self.validate_sandbox_create(sandbox)?;
 
         // Validate the composed container name early, before creating any
         // resources (volume), so we don't leave orphans when the name is
@@ -546,6 +564,32 @@ mod tests {
     fn podman_driver_error_from_not_found() {
         let err = ComputeDriverError::from(PodmanApiError::NotFound("gone".into()));
         assert!(matches!(err, ComputeDriverError::Message(_)));
+    }
+
+    #[test]
+    fn validate_gpu_request_rejects_count() {
+        let err = PodmanComputeDriver::validate_gpu_request(Some(&GpuSpec {
+            device_ids: vec![],
+            count: Some(2),
+        }))
+        .expect_err("GPU count should be rejected");
+
+        assert!(
+            matches!(err, ComputeDriverError::Precondition(message) if message.contains("does not support GPU count"))
+        );
+    }
+
+    #[test]
+    fn validate_gpu_request_prioritizes_count_and_device_id_exclusivity() {
+        let err = PodmanComputeDriver::validate_gpu_request(Some(&GpuSpec {
+            device_ids: vec!["nvidia.com/gpu=0".to_string()],
+            count: Some(0),
+        }))
+        .expect_err("GPU count with device IDs should be rejected");
+
+        assert!(
+            matches!(err, ComputeDriverError::Precondition(message) if message.contains("mutually exclusive"))
+        );
     }
 
     // ── grpc_endpoint auto-detection ───────────────────────────────────

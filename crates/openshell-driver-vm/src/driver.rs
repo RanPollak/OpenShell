@@ -2617,8 +2617,8 @@ fn sandbox_gpu(sandbox: &Sandbox) -> Option<&GpuSpec> {
     sandbox
         .spec
         .as_ref()
-        .and_then(|spec| spec.placement.as_ref())
-        .and_then(|placement| placement.gpu.as_ref())
+        .and_then(|spec| spec.resource_requirements.as_ref())
+        .and_then(|requirements| requirements.gpu.as_ref())
 }
 
 fn requested_gpu_device(gpu: Option<&GpuSpec>) -> Option<&str> {
@@ -2632,6 +2632,22 @@ fn validate_gpu_request(gpu: Option<&GpuSpec>, gpu_enabled: bool) -> Result<(), 
         return Err(Status::failed_precondition(
             "GPU support is not enabled on this VM driver; start the VM compute driver with GPU support enabled",
         ));
+    }
+
+    if let Some(gpu) = gpu {
+        if gpu.count.is_some() && !gpu.device_ids.is_empty() {
+            return Err(Status::invalid_argument(
+                "gpu.count is mutually exclusive with gpu.device_ids",
+            ));
+        }
+        if gpu.count == Some(0) {
+            return Err(Status::invalid_argument("gpu.count must be greater than 0"));
+        }
+        if gpu.count.is_some_and(|count| count > 1) {
+            return Err(Status::invalid_argument(
+                "vm compute driver supports at most one GPU",
+            ));
+        }
     }
 
     if gpu.is_some_and(|gpu| gpu.device_ids.len() > 1) {
@@ -4480,8 +4496,11 @@ mod tests {
         let sandbox = Sandbox {
             id: "sandbox-123".to_string(),
             spec: Some(SandboxSpec {
-                placement: Some(ResourceRequirements {
-                    gpu: Some(GpuSpec { device_ids: vec![] }),
+                resource_requirements: Some(ResourceRequirements {
+                    gpu: Some(GpuSpec {
+                        device_ids: vec![],
+                        count: None,
+                    }),
                 }),
                 ..Default::default()
             }),
@@ -4501,8 +4520,11 @@ mod tests {
         let sandbox = Sandbox {
             id: "sandbox-123".to_string(),
             spec: Some(SandboxSpec {
-                placement: Some(ResourceRequirements {
-                    gpu: Some(GpuSpec { device_ids: vec![] }),
+                resource_requirements: Some(ResourceRequirements {
+                    gpu: Some(GpuSpec {
+                        device_ids: vec![],
+                        count: None,
+                    }),
                 }),
                 ..Default::default()
             }),
@@ -4512,13 +4534,95 @@ mod tests {
     }
 
     #[test]
+    fn validate_vm_sandbox_accepts_gpu_count_one_when_enabled() {
+        let sandbox = Sandbox {
+            id: "sandbox-123".to_string(),
+            spec: Some(SandboxSpec {
+                resource_requirements: Some(ResourceRequirements {
+                    gpu: Some(GpuSpec {
+                        device_ids: vec![],
+                        count: Some(1),
+                    }),
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        validate_vm_sandbox(&sandbox, true).expect("gpu count one should be accepted");
+    }
+
+    #[test]
+    fn validate_vm_sandbox_rejects_gpu_count_greater_than_one() {
+        let sandbox = Sandbox {
+            id: "sandbox-123".to_string(),
+            spec: Some(SandboxSpec {
+                resource_requirements: Some(ResourceRequirements {
+                    gpu: Some(GpuSpec {
+                        device_ids: vec![],
+                        count: Some(2),
+                    }),
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let err =
+            validate_vm_sandbox(&sandbox, true).expect_err("gpu count > 1 should be rejected");
+        assert_eq!(err.code(), Code::InvalidArgument);
+        assert!(err.message().contains("at most one GPU"));
+    }
+
+    #[test]
+    fn validate_vm_sandbox_rejects_gpu_count_with_device_id() {
+        let sandbox = Sandbox {
+            id: "sandbox-123".to_string(),
+            spec: Some(SandboxSpec {
+                resource_requirements: Some(ResourceRequirements {
+                    gpu: Some(GpuSpec {
+                        device_ids: vec!["0000:2d:00.0".to_string()],
+                        count: Some(1),
+                    }),
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let err = validate_vm_sandbox(&sandbox, true)
+            .expect_err("gpu count with device ID should be rejected");
+        assert_eq!(err.code(), Code::InvalidArgument);
+        assert!(err.message().contains("mutually exclusive"));
+    }
+
+    #[test]
+    fn validate_vm_sandbox_prioritizes_gpu_count_and_device_id_exclusivity() {
+        let sandbox = Sandbox {
+            id: "sandbox-123".to_string(),
+            spec: Some(SandboxSpec {
+                resource_requirements: Some(ResourceRequirements {
+                    gpu: Some(GpuSpec {
+                        device_ids: vec!["0000:2d:00.0".to_string()],
+                        count: Some(0),
+                    }),
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let err = validate_vm_sandbox(&sandbox, true)
+            .expect_err("gpu count with device ID should be rejected");
+        assert_eq!(err.code(), Code::InvalidArgument);
+        assert!(err.message().contains("mutually exclusive"));
+    }
+
+    #[test]
     fn validate_vm_sandbox_rejects_multiple_gpu_device_ids() {
         let sandbox = Sandbox {
             id: "sandbox-123".to_string(),
             spec: Some(SandboxSpec {
-                placement: Some(ResourceRequirements {
+                resource_requirements: Some(ResourceRequirements {
                     gpu: Some(GpuSpec {
                         device_ids: vec!["0000:2d:00.0".to_string(), "0000:3d:00.0".to_string()],
+                        count: None,
                     }),
                 }),
                 ..Default::default()
@@ -4538,7 +4642,10 @@ mod tests {
 
     #[test]
     fn requested_gpu_device_defaults_empty_request_to_inventory_choice() {
-        let gpu = GpuSpec { device_ids: vec![] };
+        let gpu = GpuSpec {
+            device_ids: vec![],
+            count: None,
+        };
 
         assert_eq!(requested_gpu_device(Some(&gpu)), Some(""));
     }
@@ -4547,6 +4654,7 @@ mod tests {
     fn requested_gpu_device_returns_first_explicit_device_id() {
         let gpu = GpuSpec {
             device_ids: vec!["0000:2d:00.0".to_string()],
+            count: None,
         };
 
         assert_eq!(requested_gpu_device(Some(&gpu)), Some("0000:2d:00.0"));

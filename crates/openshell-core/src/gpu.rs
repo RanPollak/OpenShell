@@ -30,7 +30,10 @@ mod tests {
 
     #[test]
     fn cdi_gpu_device_ids_defaults_empty_request_to_all_gpus() {
-        let request = GpuSpec { device_ids: vec![] };
+        let request = GpuSpec {
+            device_ids: vec![],
+            count: None,
+        };
 
         assert_eq!(
             cdi_gpu_device_ids(Some(&request)),
@@ -42,6 +45,7 @@ mod tests {
     fn cdi_gpu_device_ids_passes_single_device_id_through() {
         let request = GpuSpec {
             device_ids: vec!["nvidia.com/gpu=0".to_string()],
+            count: None,
         };
 
         assert_eq!(
@@ -57,6 +61,7 @@ mod tests {
                 "nvidia.com/gpu=0".to_string(),
                 "nvidia.com/gpu=1".to_string(),
             ],
+            count: None,
         };
 
         assert_eq!(

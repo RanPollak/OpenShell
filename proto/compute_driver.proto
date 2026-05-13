@@ -96,9 +96,11 @@ message ResourceRequirements {
 
 // Driver-native GPU resource details.
 message GPUSpec {
-  // Optional driver-native device identifiers. Empty means the driver chooses
-  // its default GPU assignment behavior.
+  // Optional driver-native device identifiers. Mutually exclusive with count.
+  // Empty means the driver chooses its default GPU assignment behavior.
   repeated string device_ids = 1;
+  // Optional number of GPUs requested. Mutually exclusive with device_ids.
+  optional uint32 count = 2;
 }
 
 // Driver-owned runtime template consumed by the compute platform.

@@ -1228,14 +1228,14 @@ fn driver_sandbox_spec_from_public(spec: &SandboxSpec) -> DriverSandboxSpec {
             .template
             .as_ref()
             .map(driver_sandbox_template_from_public),
-        placement: spec
-            .placement
-            .as_ref()
-            .map(|placement| DriverSandboxResourceRequirements {
-                gpu: placement.gpu.as_ref().map(|gpu| DriverGpuSpec {
+        resource_requirements: spec.resource_requirements.as_ref().map(|requirements| {
+            DriverSandboxResourceRequirements {
+                gpu: requirements.gpu.as_ref().map(|gpu| DriverGpuSpec {
                     device_ids: gpu.device_ids.clone(),
+                    count: gpu.count,
                 }),
-            }),
+            }
+        }),
     }
 }
 
@@ -1587,8 +1587,8 @@ fn derive_phase(status: Option<&DriverSandboxStatus>) -> SandboxPhase {
 
 fn rewrite_user_facing_conditions(status: &mut Option<SandboxStatus>, spec: Option<&SandboxSpec>) {
     let gpu_requested = spec
-        .and_then(|sandbox_spec| sandbox_spec.placement.as_ref())
-        .is_some_and(|placement| placement.gpu.is_some());
+        .and_then(|sandbox_spec| sandbox_spec.resource_requirements.as_ref())
+        .is_some_and(|requirements| requirements.gpu.is_some());
     if !gpu_requested {
         return;
     }
@@ -1599,7 +1599,7 @@ fn rewrite_user_facing_conditions(status: &mut Option<SandboxStatus>, spec: Opti
                 && condition.status.eq_ignore_ascii_case("false")
                 && condition.reason.eq_ignore_ascii_case("Unschedulable")
             {
-                condition.message = "GPU sandbox could not be scheduled on the active gateway. Another GPU sandbox may already be using the available GPU, or the gateway may not currently be able to satisfy GPU placement. Please refer to documentation and use `openshell doctor` commands to inspect GPU support and gateway configuration.".to_string();
+                condition.message = "GPU sandbox could not be scheduled on the active gateway. Another GPU sandbox may already be using the available GPU, or the gateway may not currently be able to satisfy GPU resource requirements. Please refer to documentation and use `openshell doctor` commands to inspect GPU support and gateway configuration.".to_string();
             }
         }
     }
@@ -1770,9 +1770,10 @@ mod tests {
     #[test]
     fn driver_sandbox_spec_from_public_preserves_gpu_request_device_ids() {
         let public = SandboxSpec {
-            placement: Some(ResourceRequirements {
+            resource_requirements: Some(ResourceRequirements {
                 gpu: Some(GpuSpec {
                     device_ids: vec!["nvidia.com/gpu=0".to_string()],
+                    count: None,
                 }),
             }),
             ..Default::default()
@@ -1782,12 +1783,37 @@ mod tests {
 
         assert_eq!(
             driver
-                .placement
+                .resource_requirements
                 .expect("driver resource requirements should be present")
                 .gpu
                 .expect("driver GPU request should be present")
                 .device_ids,
             vec!["nvidia.com/gpu=0".to_string()]
+        );
+    }
+
+    #[test]
+    fn driver_sandbox_spec_from_public_preserves_gpu_count() {
+        let public = SandboxSpec {
+            resource_requirements: Some(ResourceRequirements {
+                gpu: Some(GpuSpec {
+                    device_ids: vec![],
+                    count: Some(2),
+                }),
+            }),
+            ..Default::default()
+        };
+
+        let driver = driver_sandbox_spec_from_public(&public);
+
+        assert_eq!(
+            driver
+                .resource_requirements
+                .expect("driver resource requirements should be present")
+                .gpu
+                .expect("driver GPU request should be present")
+                .count,
+            Some(2)
         );
     }
 
@@ -2241,8 +2267,11 @@ mod tests {
         rewrite_user_facing_conditions(
             &mut status,
             Some(&SandboxSpec {
-                placement: Some(ResourceRequirements {
-                    gpu: Some(GpuSpec { device_ids: vec![] }),
+                resource_requirements: Some(ResourceRequirements {
+                    gpu: Some(GpuSpec {
+                        device_ids: vec![],
+                        count: None,
+                    }),
                 }),
                 ..Default::default()
             }),
@@ -2251,7 +2280,7 @@ mod tests {
         let message = &status.unwrap().conditions[0].message;
         assert_eq!(
             message,
-            "GPU sandbox could not be scheduled on the active gateway. Another GPU sandbox may already be using the available GPU, or the gateway may not currently be able to satisfy GPU placement. Please refer to documentation and use `openshell doctor` commands to inspect GPU support and gateway configuration."
+            "GPU sandbox could not be scheduled on the active gateway. Another GPU sandbox may already be using the available GPU, or the gateway may not currently be able to satisfy GPU resource requirements. Please refer to documentation and use `openshell doctor` commands to inspect GPU support and gateway configuration."
         );
     }
 
@@ -2275,7 +2304,7 @@ mod tests {
         rewrite_user_facing_conditions(
             &mut status,
             Some(&SandboxSpec {
-                placement: None,
+                resource_requirements: None,
                 ..Default::default()
             }),
         );
@@ -2502,8 +2531,11 @@ mod tests {
 
         let sandbox = Sandbox {
             spec: Some(SandboxSpec {
-                placement: Some(ResourceRequirements {
-                    gpu: Some(GpuSpec { device_ids: vec![] }),
+                resource_requirements: Some(ResourceRequirements {
+                    gpu: Some(GpuSpec {
+                        device_ids: vec![],
+                        count: None,
+                    }),
                 }),
                 ..Default::default()
             }),
@@ -2531,8 +2563,8 @@ mod tests {
             stored
                 .spec
                 .as_ref()
-                .and_then(|spec| spec.placement.as_ref())
-                .is_some_and(|placement| placement.gpu.is_some())
+                .and_then(|spec| spec.resource_requirements.as_ref())
+                .is_some_and(|requirements| requirements.gpu.is_some())
         );
     }
 

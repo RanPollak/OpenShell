@@ -356,8 +356,8 @@ fn build_devices(sandbox: &DriverSandbox) -> Option<Vec<LinuxDevice>> {
     let gpu = sandbox
         .spec
         .as_ref()
-        .and_then(|spec| spec.placement.as_ref())
-        .and_then(|placement| placement.gpu.as_ref());
+        .and_then(|spec| spec.resource_requirements.as_ref())
+        .and_then(|requirements| requirements.gpu.as_ref());
     cdi_gpu_device_ids(gpu).map(|device_ids| {
         device_ids
             .into_iter()
@@ -741,8 +741,11 @@ mod tests {
 
         let mut sandbox = test_sandbox("test-id", "test-name");
         sandbox.spec = Some(DriverSandboxSpec {
-            placement: Some(ResourceRequirements {
-                gpu: Some(GpuSpec { device_ids: vec![] }),
+            resource_requirements: Some(ResourceRequirements {
+                gpu: Some(GpuSpec {
+                    device_ids: vec![],
+                    count: None,
+                }),
             }),
             ..Default::default()
         });
@@ -763,12 +766,13 @@ mod tests {
 
         let mut sandbox = test_sandbox("test-id", "test-name");
         sandbox.spec = Some(DriverSandboxSpec {
-            placement: Some(ResourceRequirements {
+            resource_requirements: Some(ResourceRequirements {
                 gpu: Some(GpuSpec {
                     device_ids: vec![
                         "nvidia.com/gpu=0".to_string(),
                         "nvidia.com/gpu=1".to_string(),
                     ],
+                    count: None,
                 }),
             }),
             ..Default::default()

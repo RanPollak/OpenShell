@@ -1125,6 +1125,7 @@ enum DoctorCommands {
     Check,
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Subcommand, Debug)]
 enum SandboxCommands {
     /// Create a sandbox.
@@ -1182,9 +1183,13 @@ enum SandboxCommands {
 
         /// Target a driver-specific GPU device. Docker and Podman use CDI device IDs
         /// (for example "nvidia.com/gpu=0"); VM uses a PCI BDF or index.
-        /// Implies a GPU request. When omitted with --gpu, the driver uses its default GPU selection.
-        #[arg(long)]
+        /// Implies a GPU request. Mutually exclusive with --gpu-count.
+        #[arg(long, conflicts_with = "gpu_count")]
         gpu_device: Option<String>,
+
+        /// Request a specific number of GPUs. Mutually exclusive with --gpu-device.
+        #[arg(long, value_parser = clap::value_parser!(u32).range(1..), conflicts_with = "gpu_device")]
+        gpu_count: Option<u32>,
 
         /// CPU limit for the sandbox (for example: 500m, 1, 2.5).
         #[arg(long)]
@@ -2473,6 +2478,7 @@ async fn main() -> Result<()> {
                     editor,
                     gpu,
                     gpu_device,
+                    gpu_count,
                     cpu,
                     memory,
                     providers,
@@ -2532,6 +2538,8 @@ async fn main() -> Result<()> {
                     let endpoint = &ctx.endpoint;
                     let mut tls = tls.with_gateway_name(&ctx.name);
                     apply_auth(&mut tls, &ctx.name);
+                    let resource_requirements =
+                        run::resource_requirements_from_cli(gpu, gpu_device.as_deref(), gpu_count);
                     Box::pin(run::sandbox_create(
                         endpoint,
                         name.as_deref(),
@@ -2539,8 +2547,7 @@ async fn main() -> Result<()> {
                         &ctx.name,
                         upload_spec.as_ref(),
                         keep,
-                        gpu,
-                        gpu_device.as_deref(),
+                        resource_requirements,
                         cpu.as_deref(),
                         memory.as_deref(),
                         editor,
@@ -4073,6 +4080,52 @@ mod tests {
         } else {
             panic!("expected SandboxCommands::Create");
         }
+    }
+
+    #[test]
+    fn sandbox_create_gpu_count_parses_without_gpu_flag() {
+        let cli = Cli::try_parse_from(["openshell", "sandbox", "create", "--gpu-count", "2"])
+            .expect("sandbox create --gpu-count should parse");
+
+        if let Some(Commands::Sandbox {
+            command: Some(SandboxCommands::Create { gpu, gpu_count, .. }),
+            ..
+        }) = cli.command
+        {
+            assert!(!gpu);
+            assert_eq!(gpu_count, Some(2));
+        } else {
+            panic!("expected SandboxCommands::Create");
+        }
+    }
+
+    #[test]
+    fn sandbox_create_gpu_count_rejects_zero() {
+        let result = Cli::try_parse_from(["openshell", "sandbox", "create", "--gpu-count", "0"]);
+
+        assert!(
+            result.is_err(),
+            "sandbox create --gpu-count 0 should be rejected"
+        );
+    }
+
+    #[test]
+    fn sandbox_create_gpu_count_conflicts_with_gpu_device() {
+        let result = Cli::try_parse_from([
+            "openshell",
+            "sandbox",
+            "create",
+            "--gpu",
+            "--gpu-device",
+            "0",
+            "--gpu-count",
+            "2",
+        ]);
+
+        assert!(
+            result.is_err(),
+            "sandbox create should reject --gpu-count with --gpu-device"
+        );
     }
 
     #[test]

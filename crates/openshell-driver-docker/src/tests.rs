@@ -32,7 +32,7 @@ fn test_sandbox() -> DriverSandbox {
                 resources: None,
                 platform_config: None,
             }),
-            placement: None,
+            resource_requirements: None,
         }),
         status: None,
     }
@@ -499,8 +499,11 @@ fn build_container_create_body_clears_inherited_cmd() {
 fn validate_sandbox_rejects_gpu_when_cdi_unavailable() {
     let config = runtime_config();
     let mut sandbox = test_sandbox();
-    sandbox.spec.as_mut().unwrap().placement = Some(ResourceRequirements {
-        gpu: Some(GpuSpec { device_ids: vec![] }),
+    sandbox.spec.as_mut().unwrap().resource_requirements = Some(ResourceRequirements {
+        gpu: Some(GpuSpec {
+            device_ids: vec![],
+            count: None,
+        }),
     });
 
     let err = DockerComputeDriver::validate_sandbox(&sandbox, &config).unwrap_err();
@@ -510,12 +513,51 @@ fn validate_sandbox_rejects_gpu_when_cdi_unavailable() {
 }
 
 #[test]
+fn validate_sandbox_rejects_gpu_count() {
+    let mut config = runtime_config();
+    config.supports_gpu = true;
+    let mut sandbox = test_sandbox();
+    sandbox.spec.as_mut().unwrap().resource_requirements = Some(ResourceRequirements {
+        gpu: Some(GpuSpec {
+            device_ids: vec![],
+            count: Some(2),
+        }),
+    });
+
+    let err = DockerComputeDriver::validate_sandbox(&sandbox, &config).unwrap_err();
+
+    assert_eq!(err.code(), tonic::Code::InvalidArgument);
+    assert!(err.message().contains("does not support GPU count"));
+}
+
+#[test]
+fn validate_sandbox_prioritizes_gpu_count_and_device_id_exclusivity() {
+    let mut config = runtime_config();
+    config.supports_gpu = true;
+    let mut sandbox = test_sandbox();
+    sandbox.spec.as_mut().unwrap().resource_requirements = Some(ResourceRequirements {
+        gpu: Some(GpuSpec {
+            device_ids: vec!["nvidia.com/gpu=0".to_string()],
+            count: Some(0),
+        }),
+    });
+
+    let err = DockerComputeDriver::validate_sandbox(&sandbox, &config).unwrap_err();
+
+    assert_eq!(err.code(), tonic::Code::InvalidArgument);
+    assert!(err.message().contains("mutually exclusive"));
+}
+
+#[test]
 fn build_container_create_body_maps_gpu_to_all_cdi_device() {
     let mut config = runtime_config();
     config.supports_gpu = true;
     let mut sandbox = test_sandbox();
-    sandbox.spec.as_mut().unwrap().placement = Some(ResourceRequirements {
-        gpu: Some(GpuSpec { device_ids: vec![] }),
+    sandbox.spec.as_mut().unwrap().resource_requirements = Some(ResourceRequirements {
+        gpu: Some(GpuSpec {
+            device_ids: vec![],
+            count: None,
+        }),
     });
 
     let create_body = build_container_create_body(&sandbox, &config).unwrap();
@@ -538,12 +580,13 @@ fn build_container_create_body_passes_explicit_cdi_device_ids_through() {
     let mut config = runtime_config();
     config.supports_gpu = true;
     let mut sandbox = test_sandbox();
-    sandbox.spec.as_mut().unwrap().placement = Some(ResourceRequirements {
+    sandbox.spec.as_mut().unwrap().resource_requirements = Some(ResourceRequirements {
         gpu: Some(GpuSpec {
             device_ids: vec![
                 "nvidia.com/gpu=0".to_string(),
                 "nvidia.com/gpu=1".to_string(),
             ],
+            count: None,
         }),
     });
 

@@ -131,6 +131,13 @@ pub(super) fn validate_sandbox_spec(
         validate_sandbox_template(tmpl)?;
     }
 
+    // --- spec.resource_requirements ---
+    if let Some(requirements) = spec.resource_requirements.as_ref()
+        && let Some(gpu) = requirements.gpu.as_ref()
+    {
+        validate_gpu_spec(gpu)?;
+    }
+
     // --- spec.policy serialized size ---
     if let Some(ref policy) = spec.policy {
         let size = policy.encoded_len();
@@ -141,6 +148,20 @@ pub(super) fn validate_sandbox_spec(
         }
     }
 
+    Ok(())
+}
+
+fn validate_gpu_spec(gpu: &openshell_core::proto::GpuSpec) -> Result<(), Status> {
+    if gpu.count.is_some() && !gpu.device_ids.is_empty() {
+        return Err(Status::invalid_argument(
+            "resource_requirements.gpu.count is mutually exclusive with resource_requirements.gpu.device_ids",
+        ));
+    }
+    if gpu.count == Some(0) {
+        return Err(Status::invalid_argument(
+            "resource_requirements.gpu.count must be greater than 0",
+        ));
+    }
     Ok(())
 }
 
@@ -687,12 +708,77 @@ mod tests {
     #[test]
     fn validate_sandbox_spec_accepts_gpu_flag() {
         let spec = SandboxSpec {
-            placement: Some(ResourceRequirements {
-                gpu: Some(GpuSpec { device_ids: vec![] }),
+            resource_requirements: Some(ResourceRequirements {
+                gpu: Some(GpuSpec {
+                    device_ids: vec![],
+                    count: None,
+                }),
             }),
             ..Default::default()
         };
         assert!(validate_sandbox_spec("gpu-sandbox", &spec).is_ok());
+    }
+
+    #[test]
+    fn validate_sandbox_spec_accepts_gpu_count() {
+        let spec = SandboxSpec {
+            resource_requirements: Some(ResourceRequirements {
+                gpu: Some(GpuSpec {
+                    device_ids: vec![],
+                    count: Some(2),
+                }),
+            }),
+            ..Default::default()
+        };
+        assert!(validate_sandbox_spec("gpu-sandbox", &spec).is_ok());
+    }
+
+    #[test]
+    fn validate_sandbox_spec_rejects_zero_gpu_count() {
+        let spec = SandboxSpec {
+            resource_requirements: Some(ResourceRequirements {
+                gpu: Some(GpuSpec {
+                    device_ids: vec![],
+                    count: Some(0),
+                }),
+            }),
+            ..Default::default()
+        };
+        let err = validate_sandbox_spec("gpu-sandbox", &spec).unwrap_err();
+        assert_eq!(err.code(), Code::InvalidArgument);
+        assert!(err.message().contains("count must be greater than 0"));
+    }
+
+    #[test]
+    fn validate_sandbox_spec_rejects_gpu_count_with_device_ids() {
+        let spec = SandboxSpec {
+            resource_requirements: Some(ResourceRequirements {
+                gpu: Some(GpuSpec {
+                    device_ids: vec!["nvidia.com/gpu=0".to_string()],
+                    count: Some(1),
+                }),
+            }),
+            ..Default::default()
+        };
+        let err = validate_sandbox_spec("gpu-sandbox", &spec).unwrap_err();
+        assert_eq!(err.code(), Code::InvalidArgument);
+        assert!(err.message().contains("mutually exclusive"));
+    }
+
+    #[test]
+    fn validate_sandbox_spec_prioritizes_device_id_and_count_exclusivity() {
+        let spec = SandboxSpec {
+            resource_requirements: Some(ResourceRequirements {
+                gpu: Some(GpuSpec {
+                    device_ids: vec!["nvidia.com/gpu=0".to_string()],
+                    count: Some(0),
+                }),
+            }),
+            ..Default::default()
+        };
+        let err = validate_sandbox_spec("gpu-sandbox", &spec).unwrap_err();
+        assert_eq!(err.code(), Code::InvalidArgument);
+        assert!(err.message().contains("mutually exclusive"));
     }
 
     #[test]

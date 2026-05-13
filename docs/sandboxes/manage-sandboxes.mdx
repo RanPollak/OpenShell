@@ -58,6 +58,19 @@ requests GPU resources for the sandbox.
 openshell sandbox create --gpu-device nvidia.com/gpu=0 -- claude
 ```
 
+To request a specific number of GPUs, use `--gpu-count`. GPU count requests are
+mutually exclusive with explicit GPU device IDs, and the count must be greater
+than zero.
+
+```shell
+openshell sandbox create --gpu-count 2 -- claude
+```
+
+Kubernetes-backed sandboxes honor `--gpu-count` by setting the `nvidia.com/gpu`
+resource limit to the requested count. VM-backed sandboxes accept only
+`--gpu-count 1`. Docker-backed and Podman-backed sandboxes currently reject GPU
+count requests.
+
 For Docker-backed sandboxes, GPU injection uses Docker CDI. If you enable Docker
 CDI after the gateway starts, restart the gateway so OpenShell can detect the
 updated Docker daemon capability.

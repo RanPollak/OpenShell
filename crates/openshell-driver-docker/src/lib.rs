@@ -360,9 +360,9 @@ impl DockerComputeDriver {
             ));
         }
         Self::validate_gpu_request(
-            spec.placement
+            spec.resource_requirements
                 .as_ref()
-                .and_then(|placement| placement.gpu.as_ref()),
+                .and_then(|requirements| requirements.gpu.as_ref()),
             config.supports_gpu,
         )?;
         if !template.agent_socket_path.trim().is_empty() {
@@ -385,6 +385,21 @@ impl DockerComputeDriver {
     }
 
     fn validate_gpu_request(gpu: Option<&GpuSpec>, supports_gpu: bool) -> Result<(), Status> {
+        if let Some(gpu) = gpu {
+            if gpu.count.is_some() && !gpu.device_ids.is_empty() {
+                return Err(Status::invalid_argument(
+                    "gpu.count is mutually exclusive with gpu.device_ids",
+                ));
+            }
+            if gpu.count == Some(0) {
+                return Err(Status::invalid_argument("gpu.count must be greater than 0"));
+            }
+            if gpu.count.is_some() {
+                return Err(Status::invalid_argument(
+                    "docker compute driver does not support GPU count requests",
+                ));
+            }
+        }
         if gpu.is_some() && !supports_gpu {
             return Err(Status::failed_precondition(
                 "docker GPU sandboxes require Docker CDI support. Enable CDI on the Docker daemon, then restart the OpenShell gateway/server so GPU capability is detected.",
@@ -1057,11 +1072,11 @@ fn build_container_create_body(
             nano_cpus: resource_limits.nano_cpus,
             memory: resource_limits.memory_bytes,
             device_requests: docker_gpu_device_requests(
-                spec.placement
+                spec.resource_requirements
                     .as_ref()
-                    .and_then(|placement| placement.gpu.as_ref()),
+                    .and_then(|requirements| requirements.gpu.as_ref()),
             ),
-            mounts: Some(build_mounts(config)),
+            binds: Some(build_binds(config)),
             restart_policy: Some(RestartPolicy {
                 name: Some(RestartPolicyNameEnum::UNLESS_STOPPED),
                 maximum_retry_count: None,
