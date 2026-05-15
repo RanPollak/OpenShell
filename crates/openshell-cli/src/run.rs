@@ -1668,7 +1668,9 @@ pub async fn sandbox_create(
         }
         None => None,
     };
-    let requested_gpu = gpu || image.as_deref().is_some_and(image_requests_gpu);
+    let requested_gpu = gpu
+        || gpu_device.is_some_and(|device_id| !device_id.is_empty())
+        || image.as_deref().is_some_and(image_requests_gpu);
 
     let inferred_types: Vec<String> = inferred_provider_type(command).into_iter().collect();
     let configured_providers = ensure_required_providers(

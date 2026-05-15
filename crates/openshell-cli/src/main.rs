@@ -1182,8 +1182,8 @@ enum SandboxCommands {
 
         /// Target a driver-specific GPU device. Docker and Podman use CDI device IDs
         /// (for example "nvidia.com/gpu=0"); VM uses a PCI BDF or index.
-        /// Only valid with --gpu. When omitted with --gpu, the driver uses its default GPU selection.
-        #[arg(long, requires = "gpu")]
+        /// Implies a GPU request. When omitted with --gpu, the driver uses its default GPU selection.
+        #[arg(long)]
         gpu_device: Option<String>,
 
         /// CPU limit for the sandbox (for example: 500m, 1, 2.5).
@@ -4046,6 +4046,32 @@ mod tests {
                 assert_eq!(command, vec!["claude".to_string()]);
             }
             other => panic!("expected SandboxCommands::Create, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn sandbox_create_gpu_device_parses_without_gpu_flag() {
+        let cli = Cli::try_parse_from([
+            "openshell",
+            "sandbox",
+            "create",
+            "--gpu-device",
+            "nvidia.com/gpu=0",
+        ])
+        .expect("sandbox create --gpu-device should parse without --gpu");
+
+        if let Some(Commands::Sandbox {
+            command:
+                Some(SandboxCommands::Create {
+                    gpu, gpu_device, ..
+                }),
+            ..
+        }) = cli.command
+        {
+            assert!(!gpu);
+            assert_eq!(gpu_device.as_deref(), Some("nvidia.com/gpu=0"));
+        } else {
+            panic!("expected SandboxCommands::Create");
         }
     }
 
