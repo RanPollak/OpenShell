@@ -13,11 +13,15 @@ credentials:
     auth_style: bearer
     header_name: authorization
 endpoints:
+  # api.github.com is the REST API surface. Defaults to read-only —
+  # writes require an explicit policy proposal so the agentic loop +
+  # prover can audit each capability change.
   - host: api.github.com
     port: 443
     protocol: rest
-    access: read-write
+    access: read-only
     enforcement: enforce
+  # github.com is the git transport (clone / fetch by default).
   - host: github.com
     port: 443
     protocol: rest
