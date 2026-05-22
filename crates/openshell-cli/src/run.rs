@@ -1622,6 +1622,7 @@ pub async fn sandbox_create(
     tty_override: Option<bool>,
     auto_providers_override: Option<bool>,
     labels: &HashMap<String, String>,
+    approval_mode: &str,
     tls: &TlsOptions,
 ) -> Result<()> {
     if editor.is_some() && !command.is_empty() {
@@ -1695,6 +1696,7 @@ pub async fn sandbox_create(
             policy,
             providers: configured_providers,
             template,
+            proposal_approval_mode: approval_mode.to_string(),
             ..SandboxSpec::default()
         }),
         name: name.unwrap_or_default().to_string(),
