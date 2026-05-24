@@ -191,8 +191,7 @@ fn prepare_backend_request(
     // Apply the route's configured model-source policy to the request body.
     // This decides whether the client's `model` field is preserved, overwritten
     // by `route.model`, or rejected on mismatch.  See `ModelSource` for the
-    // semantics of each mode and #994 for the bug that motivated making the
-    // policy explicit.
+    // semantics of each mode.
     let body = apply_model_source_policy(&body, route)?;
     builder = builder.body(body);
 

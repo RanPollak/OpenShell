@@ -469,6 +469,10 @@ async fn resolve_inference_bundle(store: &Store) -> Result<GetInferenceBundleRes
     .unwrap_or(i64::MAX);
 
     // Compute a simple revision from route contents for cache freshness checks.
+    // `model_source` is part of the hash because changing only the policy must
+    // invalidate the sandbox-side route cache; otherwise refresh would skip
+    // the update and the new policy would not take effect until the next
+    // unrelated mutation.
     let revision = {
         use std::hash::{Hash, Hasher};
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
@@ -480,6 +484,7 @@ async fn resolve_inference_bundle(store: &Store) -> Result<GetInferenceBundleRes
             r.protocols.hash(&mut hasher);
             r.provider_type.hash(&mut hasher);
             r.timeout_secs.hash(&mut hasher);
+            r.model_source.hash(&mut hasher);
         }
         format!("{:016x}", hasher.finish())
     };
@@ -762,6 +767,55 @@ mod tests {
         assert_eq!(
             resp1.revision, resp2.revision,
             "same route should produce same revision"
+        );
+    }
+
+    #[tokio::test]
+    async fn bundle_revision_changes_when_only_model_source_changes() {
+        // A policy-only change still has to invalidate the sandbox-side
+        // route cache; otherwise the new policy would not take effect
+        // until an unrelated mutation bumped the revision.
+        let store = test_store().await;
+
+        let provider = make_provider("openai-dev", "openai", "OPENAI_API_KEY", "sk-test");
+        store
+            .put_message(&provider)
+            .await
+            .expect("persist provider");
+
+        upsert_cluster_inference_route(
+            &store,
+            CLUSTER_INFERENCE_ROUTE_NAME,
+            "openai-dev",
+            "mock/model-stable",
+            0,
+            ModelSource::Router,
+            false,
+        )
+        .await
+        .expect("first set should succeed");
+        let before = resolve_inference_bundle(&store)
+            .await
+            .expect("first resolve");
+
+        upsert_cluster_inference_route(
+            &store,
+            CLUSTER_INFERENCE_ROUTE_NAME,
+            "openai-dev",
+            "mock/model-stable",
+            0,
+            ModelSource::Caller,
+            false,
+        )
+        .await
+        .expect("policy-only update should succeed");
+        let after = resolve_inference_bundle(&store)
+            .await
+            .expect("second resolve");
+
+        assert_ne!(
+            before.revision, after.revision,
+            "changing model_source must invalidate the bundle revision",
         );
     }
 

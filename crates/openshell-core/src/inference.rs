@@ -27,17 +27,15 @@ pub enum AuthHeader {
 /// Per-route policy that decides how the inference router treats the client's
 /// `model` field when forwarding a request to the upstream provider.
 ///
-/// Motivated by [#994]: silently overwriting the client-supplied model masked
-/// typos and stale model references — the upstream provider's "unknown model"
-/// error never reached the caller. Making the policy explicit lets operators
-/// pick between provider-swap convenience and request-integrity guarantees
-/// without changing the default.
+/// Silently overwriting the client-supplied model masks typos and stale model
+/// references — the upstream provider's "unknown model" error never reaches
+/// the caller. Making the policy explicit lets operators pick between
+/// provider-swap convenience and request-integrity guarantees without
+/// changing the default.
 ///
 /// In all three modes, a missing or empty client model falls back to
 /// `route.model`, because every supported upstream provider requires a
 /// non-empty `model` field.
-///
-/// [#994]: https://github.com/NVIDIA/NemoClaw/issues/994
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ModelSource {
     /// Existing behaviour: the route's configured model wins, even when the

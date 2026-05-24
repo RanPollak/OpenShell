@@ -164,9 +164,12 @@ Gateway inference:
 
   Provider: nvidia-prod
   Model: nvidia/nemotron-3-nano-30b-a3b
-  Timeout: 300s
   Version: 1
+  Timeout: 300s
+  Model source: router
 ```
+
+`Model source` is printed only for routes that have a `model_source` policy persisted. Routes saved before that field existed leave it blank and are treated as `router` by the gateway.
 
 Use `update` when you want to change only one field:
 
@@ -174,6 +177,7 @@ Use `update` when you want to change only one field:
 openshell inference update --model nvidia/nemotron-3-nano-30b-a3b
 openshell inference update --provider openai-prod
 openshell inference update --timeout 120
+openshell inference update --model-source caller
 ```
 
 ## Use the Local Endpoint from a Sandbox

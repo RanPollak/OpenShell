@@ -1101,7 +1101,7 @@ enum InferenceCommands {
         ///   the client's `model` with `--model` before forwarding. A
         ///   mismatch is logged at warn level.
         /// - `caller`: forward the client's `model` unchanged so upstream
-        ///   "unknown model" errors propagate back to the caller (#994).
+        ///   "unknown model" errors propagate back to the caller.
         /// - `matching`: reject requests whose `model` differs from
         ///   `--model`. Use this to enforce a single configured model.
         #[arg(long, value_name = "POLICY")]

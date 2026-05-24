@@ -258,7 +258,7 @@ async fn proxy_router_mode_overrides_client_supplied_model() {
     // Default model-source is `Router` — the historical behaviour. The
     // client's `model` is replaced with `route.model` before forwarding so
     // operators can swap upstream models without reconfiguring agents. A
-    // mismatch is logged but not rejected; see #994 for the trade-off.
+    // mismatch is logged but not rejected.
     let mock_server = MockServer::start().await;
 
     Mock::given(method("POST"))
@@ -299,8 +299,7 @@ async fn proxy_router_mode_overrides_client_supplied_model() {
 async fn proxy_caller_mode_preserves_client_supplied_model() {
     // `Caller` mode forwards the client's `model` verbatim. This is the
     // mode operators pick when they want upstream "unknown model" errors
-    // to surface back to the caller instead of being silently rewritten
-    // (#994).
+    // to surface back to the caller instead of being silently rewritten.
     let mock_server = MockServer::start().await;
 
     Mock::given(method("POST"))

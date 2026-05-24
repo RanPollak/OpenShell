@@ -67,8 +67,10 @@ message SetClusterInferenceRequest {
   // Policy controlling how the router treats the client-supplied `model`
   // field. Accepts `router` (default, current behaviour), `caller`
   // (forward the client's `model` unchanged), or `matching` (reject when
-  // the client's `model` differs from `model_id`). Empty string defers to
-  // the existing persisted value or the historical default.
+  // the client's `model` differs from `model_id`). An empty string is
+  // treated as the default (`router`); callers that need to preserve a
+  // previously-persisted policy across a partial update should read the
+  // current value via `GetClusterInference` and pass it back in.
   string model_source = 7;
 }
 
