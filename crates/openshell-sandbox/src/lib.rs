@@ -1253,13 +1253,36 @@ fn partition_routes(
 }
 
 /// Convert a proto bundle response into resolved routes for the router.
+///
+/// Routes carrying an unrecognised `model_source` token are dropped instead
+/// of silently downgraded to the default policy. Forwarding under the wrong
+/// policy after a version skew (e.g. a newer gateway sending a token the
+/// sandbox cannot parse) could mask caller-side model bugs the operator
+/// explicitly opted out of masking, so the safe move is to take the route
+/// out of service until the sandbox understands it.
 pub(crate) fn bundle_to_resolved_routes(
     bundle: &openshell_core::proto::GetInferenceBundleResponse,
 ) -> Vec<openshell_router::config::ResolvedRoute> {
     bundle
         .routes
         .iter()
-        .map(|r| {
+        .filter_map(|r| {
+            let model_source = if r.model_source.is_empty() {
+                openshell_core::inference::ModelSource::default()
+            } else {
+                match openshell_core::inference::ModelSource::parse(&r.model_source) {
+                    Some(parsed) => parsed,
+                    None => {
+                        tracing::warn!(
+                            route = %r.name,
+                            token = %r.model_source,
+                            "dropping inference route: unknown model_source token; \
+                             upgrade the sandbox or correct the gateway configuration",
+                        );
+                        return None;
+                    }
+                }
+            };
             let (auth, default_headers, passthrough_headers) =
                 openshell_core::inference::route_headers_for_provider_type(&r.provider_type);
             let timeout = if r.timeout_secs == 0 {
@@ -1267,13 +1290,7 @@ pub(crate) fn bundle_to_resolved_routes(
             } else {
                 Duration::from_secs(r.timeout_secs)
             };
-            // Empty `model_source` from the bundle means the historical
-            // default (`router`). Unknown tokens are accepted defensively —
-            // we'd rather forward the request with default policy than
-            // refuse to serve sandboxes after a future proto extension.
-            let model_source =
-                openshell_core::inference::ModelSource::parse(&r.model_source).unwrap_or_default();
-            openshell_router::config::ResolvedRoute {
+            Some(openshell_router::config::ResolvedRoute {
                 name: r.name.clone(),
                 endpoint: r.base_url.clone(),
                 model: r.model_id.clone(),
@@ -1284,7 +1301,7 @@ pub(crate) fn bundle_to_resolved_routes(
                 passthrough_headers,
                 timeout,
                 model_source,
-            }
+            })
         })
         .collect()
 }
@@ -2738,6 +2755,48 @@ mod tests {
 
         let routes = bundle_to_resolved_routes(&bundle);
         assert_eq!(routes[0].name, "sandbox-system");
+    }
+
+    #[test]
+    fn bundle_to_resolved_routes_drops_route_with_unknown_model_source() {
+        // A newer gateway could send a `model_source` token the sandbox does
+        // not yet understand. Forwarding the request under the default policy
+        // would silently re-mask caller-side bugs the operator opted out of,
+        // so the route is removed from the resolved set instead.
+        let bundle = openshell_core::proto::GetInferenceBundleResponse {
+            routes: vec![
+                openshell_core::proto::ResolvedRoute {
+                    name: "inference.local".to_string(),
+                    base_url: "https://api.example.com/v1".to_string(),
+                    api_key: "key".to_string(),
+                    model_id: "gpt-4".to_string(),
+                    protocols: vec!["openai_chat_completions".to_string()],
+                    provider_type: "openai".to_string(),
+                    timeout_secs: 0,
+                    model_source: "future-policy".to_string(),
+                },
+                openshell_core::proto::ResolvedRoute {
+                    name: "sandbox-system".to_string(),
+                    base_url: "https://api.example.com/v1".to_string(),
+                    api_key: "key".to_string(),
+                    model_id: "gpt-4".to_string(),
+                    protocols: vec!["openai_chat_completions".to_string()],
+                    provider_type: "openai".to_string(),
+                    timeout_secs: 0,
+                    model_source: "caller".to_string(),
+                },
+            ],
+            revision: "rev".to_string(),
+            generated_at_ms: 0,
+        };
+
+        let routes = bundle_to_resolved_routes(&bundle);
+        assert_eq!(routes.len(), 1);
+        assert_eq!(routes[0].name, "sandbox-system");
+        assert_eq!(
+            routes[0].model_source,
+            openshell_core::inference::ModelSource::Caller,
+        );
     }
 
     #[test]
