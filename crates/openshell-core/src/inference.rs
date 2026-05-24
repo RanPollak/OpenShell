@@ -38,11 +38,11 @@ pub enum AuthHeader {
 /// non-empty `model` field.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ModelSource {
-    /// Existing behaviour: the route's configured model wins, even when the
-    /// client sent a different value. A mismatch is logged at `warn` level so
-    /// operators can spot accidental typos without rejecting the request.
-    /// This is the default to keep the historical provider-swap workflow
-    /// working without explicit opt-in.
+    /// Route's configured model wins, even when the client sent a different
+    /// value. A mismatch is logged at `warn` level so operators can spot
+    /// accidental typos without rejecting the request. This is the default
+    /// to keep the historical provider-swap workflow working without
+    /// explicit opt-in.
     #[default]
     Router,
     /// The client-supplied model is forwarded to the upstream provider

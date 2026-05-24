@@ -58,8 +58,8 @@ pub struct ResolvedRoute {
     /// Per-request timeout for proxied inference calls.
     pub timeout: Duration,
     /// Policy controlling how the router treats the client-supplied `model`
-    /// field. Default is [`ModelSource::Router`] to preserve historical
-    /// behaviour.
+    /// field. Default is [`ModelSource::Router`] to preserve the historical
+    /// rewrite mode.
     pub model_source: ModelSource,
 }
 

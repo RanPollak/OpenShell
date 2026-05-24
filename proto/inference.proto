@@ -65,7 +65,7 @@ message SetClusterInferenceRequest {
   // Per-route request timeout in seconds. 0 means use default (60s).
   uint64 timeout_secs = 6;
   // Policy controlling how the router treats the client-supplied `model`
-  // field. Accepts `router` (default, current behaviour), `caller`
+  // field. Accepts `router` (default, current rewrite mode), `caller`
   // (forward the client's `model` unchanged), or `matching` (reject when
   // the client's `model` differs from `model_id`). An empty string is
   // treated as the default (`router`); callers that need to preserve a

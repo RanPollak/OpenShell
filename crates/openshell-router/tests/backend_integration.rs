@@ -255,7 +255,7 @@ async fn proxy_mock_route_returns_canned_response() {
 
 #[tokio::test]
 async fn proxy_router_mode_overrides_client_supplied_model() {
-    // Default model-source is `Router` — the historical behaviour. The
+    // Default model-source is `Router` — the historical rewrite mode. The
     // client's `model` is replaced with `route.model` before forwarding so
     // operators can swap upstream models without reconfiguring agents. A
     // mismatch is logged but not rejected.
@@ -339,7 +339,7 @@ async fn proxy_caller_mode_preserves_client_supplied_model() {
 async fn proxy_caller_mode_falls_back_to_route_model_when_client_sends_empty() {
     // Empty/missing `model` from the client is filled in with `route.model`
     // regardless of mode — every supported upstream provider rejects an
-    // empty `model`, so falling back is the only sensible behaviour.
+    // empty `model`, so falling back is the only sensible default.
     let mock_server = MockServer::start().await;
 
     Mock::given(method("POST"))
@@ -446,6 +446,77 @@ async fn proxy_matching_mode_rejects_client_model_mismatch() {
     assert!(detail.contains("gpt-4o-mini"), "{detail}");
     assert!(detail.contains("meta/llama-3.1-8b-instruct"), "{detail}");
     assert!(detail.contains("matching"), "{detail}");
+}
+
+#[tokio::test]
+async fn proxy_matching_mode_rejects_non_string_model() {
+    // A non-string `model` (number, null, array, ...) is a malformed
+    // request. In `Matching` mode we refuse before any upstream call so
+    // operators get a clear error instead of a silent rewrite.
+    let router = Router::new().unwrap();
+    let candidates = mock_candidates_with_source("http://unused", ModelSource::Matching);
+
+    let body = serde_json::to_vec(&serde_json::json!({
+        "model": 42,
+        "messages": [{"role": "user", "content": "Hello"}]
+    }))
+    .unwrap();
+
+    let err = router
+        .proxy_with_candidates(
+            "openai_chat_completions",
+            "POST",
+            "/v1/chat/completions",
+            vec![("content-type".to_string(), "application/json".to_string())],
+            bytes::Bytes::from(body),
+            &candidates,
+        )
+        .await
+        .unwrap_err();
+
+    let openshell_router::RouterError::InvalidRequest(detail) = err else {
+        panic!("expected InvalidRequest, got {err:?}");
+    };
+    assert!(detail.contains("non-empty string"), "{detail}");
+    assert!(detail.contains("matching"), "{detail}");
+}
+
+#[tokio::test]
+async fn proxy_caller_mode_forwards_non_string_model_verbatim() {
+    // `Caller` mode forwards a non-string `model` untouched. The upstream
+    // provider produces the validation error so the caller's typo or wrong
+    // type is surfaced rather than masked by a router-side rewrite.
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .and(body_partial_json(serde_json::json!({"model": 42})))
+        .respond_with(ResponseTemplate::new(200).set_body_string("{}"))
+        .mount(&mock_server)
+        .await;
+
+    let router = Router::new().unwrap();
+    let candidates = mock_candidates_with_source(&mock_server.uri(), ModelSource::Caller);
+
+    let body = serde_json::to_vec(&serde_json::json!({
+        "model": 42,
+        "messages": [{"role": "user", "content": "Hello"}]
+    }))
+    .unwrap();
+
+    let response = router
+        .proxy_with_candidates(
+            "openai_chat_completions",
+            "POST",
+            "/v1/chat/completions",
+            vec![("content-type".to_string(), "application/json".to_string())],
+            bytes::Bytes::from(body),
+            &candidates,
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status, 200);
 }
 
 #[tokio::test]

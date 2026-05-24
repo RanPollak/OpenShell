@@ -5060,7 +5060,7 @@ pub async fn gateway_inference_set(
     model_source: Option<&str>,
     tls: &TlsOptions,
 ) -> Result<()> {
-    let model_source = normalize_model_source_flag(model_source)?;
+    let model_source = validate_model_source_flag(model_source)?;
     let progress = if std::io::stdout().is_terminal() {
         let spinner = ProgressBar::new_spinner();
         spinner.set_style(
@@ -5116,13 +5116,13 @@ pub async fn gateway_inference_set(
     Ok(())
 }
 
-/// Validate the CLI `--model-source` flag and normalize it to the canonical
+/// Validate the CLI `--model-source` flag and convert it to the canonical
 /// lowercase token expected by the gateway proto.  Returns an empty string
 /// when the operator did not pass the flag; callers decide what empty means
 /// (`inference set` sends it through and the server maps it to the default
 /// `router` policy, while `inference update` substitutes the persisted value
 /// before sending so the partial update preserves the existing policy).
-fn normalize_model_source_flag(model_source: Option<&str>) -> Result<String> {
+fn validate_model_source_flag(model_source: Option<&str>) -> Result<String> {
     let Some(raw) = model_source else {
         return Ok(String::new());
     };
@@ -5181,7 +5181,7 @@ pub async fn gateway_inference_update(
     // `--model-source`; otherwise validate the flag once at the CLI boundary
     // before sending it to the gateway.
     let resolved_model_source = match model_source {
-        Some(raw) => normalize_model_source_flag(Some(raw))?,
+        Some(raw) => validate_model_source_flag(Some(raw))?,
         None => current.model_source.clone(),
     };
 

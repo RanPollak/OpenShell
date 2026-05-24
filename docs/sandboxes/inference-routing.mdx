@@ -199,7 +199,7 @@ The client-supplied `api_key` is never sent upstream. The privacy router injects
 
 How the client-supplied `model` field is treated depends on the route's `model_source` policy, which the operator selects with `openshell inference set --model-source <policy>`:
 
-- `router` (default): the client-supplied `model` is overwritten with the route's configured model before forwarding. A mismatch is logged but not rejected, so an agent that hardcodes `gpt-4o` keeps working when the operator swaps to a different upstream model. This preserves the historical behaviour.
+- `router` (default): the client-supplied `model` is overwritten with the route's configured model before forwarding. A mismatch is logged but not rejected, so an agent that hardcodes `gpt-4o` keeps working when the operator swaps to a different upstream model. This preserves the historical rewrite.
 - `caller`: the client-supplied `model` is forwarded to the upstream provider verbatim. Use this when typos or stale model references in caller code should surface as the upstream's "unknown model" error instead of being silently rewritten.
 - `matching`: like `caller`, but the router rejects any request whose `model` differs from the route's configured model. Use this to enforce a single model for the entire route.
 

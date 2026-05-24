@@ -217,18 +217,23 @@ fn apply_model_source_policy(
         return Ok(body.clone());
     };
 
-    let client_model = obj
-        .get("model")
-        .and_then(|v| match v {
-            serde_json::Value::String(s) if !s.is_empty() => Some(s.as_str()),
-            _ => None,
-        })
-        .map(str::to_owned);
+    enum ClientModel {
+        Missing,
+        Valid(String),
+        WrongType,
+    }
+
+    let client_model = match obj.get("model") {
+        None | Some(serde_json::Value::Null) => ClientModel::Missing,
+        Some(serde_json::Value::String(s)) if s.is_empty() => ClientModel::Missing,
+        Some(serde_json::Value::String(s)) => ClientModel::Valid(s.clone()),
+        Some(_) => ClientModel::WrongType,
+    };
 
     match route.model_source {
         ModelSource::Router => {
-            if let Some(client) = client_model.as_deref()
-                && client != route.model
+            if let ClientModel::Valid(client) = &client_model
+                && client != &route.model
             {
                 tracing::warn!(
                     route = %route.name,
@@ -242,39 +247,44 @@ fn apply_model_source_policy(
                 serde_json::Value::String(route.model.clone()),
             );
         }
-        ModelSource::Caller => {
-            // Preserve the caller's `model` when present. Fall back to
-            // `route.model` only when missing or empty so upstream providers
-            // (which all require a non-empty `model`) still see a usable
-            // value.
-            if client_model.is_none() {
+        ModelSource::Caller => match client_model {
+            ClientModel::Missing => {
                 obj.insert(
                     "model".to_string(),
                     serde_json::Value::String(route.model.clone()),
                 );
             }
-        }
-        ModelSource::Matching => {
-            match client_model.as_deref() {
-                Some(client) if client != route.model => {
-                    return Err(RouterError::InvalidRequest(format!(
-                        "route '{}' is configured with model_source=matching; \
-                         client model '{client}' does not match route.model '{}'",
-                        route.name, route.model,
-                    )));
-                }
-                Some(_) => {
-                    // Equal — nothing to do.
-                }
-                None => {
-                    // Missing/empty — fill in the route's model.
-                    obj.insert(
-                        "model".to_string(),
-                        serde_json::Value::String(route.model.clone()),
-                    );
-                }
+            ClientModel::Valid(_) | ClientModel::WrongType => {
+                // Forward verbatim. A wrong-type field is the caller's bug
+                // and surfaces as the upstream's own validation error rather
+                // than being silently rewritten.
             }
-        }
+        },
+        ModelSource::Matching => match client_model {
+            ClientModel::Missing => {
+                obj.insert(
+                    "model".to_string(),
+                    serde_json::Value::String(route.model.clone()),
+                );
+            }
+            ClientModel::Valid(client) if client != route.model => {
+                return Err(RouterError::InvalidRequest(format!(
+                    "route '{}' is configured with model_source=matching; \
+                     client model '{client}' does not match route.model '{}'",
+                    route.name, route.model,
+                )));
+            }
+            ClientModel::Valid(_) => {
+                // Equal — nothing to do.
+            }
+            ClientModel::WrongType => {
+                return Err(RouterError::InvalidRequest(format!(
+                    "route '{}' is configured with model_source=matching; \
+                     `model` field must be a non-empty string",
+                    route.name,
+                )));
+            }
+        },
     }
 
     Ok(bytes::Bytes::from(

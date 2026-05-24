@@ -1097,7 +1097,7 @@ enum InferenceCommands {
 
         /// How the router treats the client-supplied `model` field.
         ///
-        /// - `router` (default): preserve the historical behaviour and replace
+        /// - `router` (default): preserve the historical rewrite and replace
         ///   the client's `model` with `--model` before forwarding. A
         ///   mismatch is logged at warn level.
         /// - `caller`: forward the client's `model` unchanged so upstream
