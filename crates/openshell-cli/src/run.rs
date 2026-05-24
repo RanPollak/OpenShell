@@ -5118,8 +5118,10 @@ pub async fn gateway_inference_set(
 
 /// Validate the CLI `--model-source` flag and normalize it to the canonical
 /// lowercase token expected by the gateway proto.  Returns an empty string
-/// when the operator did not pass the flag so the server keeps the existing
-/// persisted policy.
+/// when the operator did not pass the flag; callers decide what empty means
+/// (`inference set` sends it through and the server maps it to the default
+/// `router` policy, while `inference update` substitutes the persisted value
+/// before sending so the partial update preserves the existing policy).
 fn normalize_model_source_flag(model_source: Option<&str>) -> Result<String> {
     let Some(raw) = model_source else {
         return Ok(String::new());
