@@ -388,6 +388,7 @@ class ClusterInferenceConfig:
     provider_name: str
     model_id: str
     version: int
+    model_source: str = ""
 
 
 class InferenceRouteClient:
@@ -407,12 +408,14 @@ class InferenceRouteClient:
         provider_name: str,
         model_id: str,
         no_verify: bool = False,
+        model_source: str = "",
     ) -> ClusterInferenceConfig:
         response = self._stub.SetClusterInference(
             inference_pb2.SetClusterInferenceRequest(
                 provider_name=provider_name,
                 model_id=model_id,
                 no_verify=no_verify,
+                model_source=model_source,
             ),
             timeout=self._timeout,
         )
@@ -420,6 +423,7 @@ class InferenceRouteClient:
             provider_name=response.provider_name,
             model_id=response.model_id,
             version=response.version,
+            model_source=response.model_source,
         )
 
     def get_cluster(self) -> ClusterInferenceConfig:
@@ -431,6 +435,7 @@ class InferenceRouteClient:
             provider_name=response.provider_name,
             model_id=response.model_id,
             version=response.version,
+            model_source=response.model_source,
         )
 
 

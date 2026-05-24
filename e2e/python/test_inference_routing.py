@@ -64,6 +64,7 @@ def _upsert_managed_inference(
     base_url_key: str,
     model_id: str,
     base_url: str,
+    model_source: str = "",
 ) -> None:
     provider = datamodel_pb2.Provider(
         metadata=datamodel_pb2.ObjectMeta(name=provider_name),
@@ -102,6 +103,7 @@ def _upsert_managed_inference(
     inference_client.set_cluster(
         provider_name=provider_name,
         model_id=model_id,
+        model_source=model_source,
     )
 
 
@@ -367,3 +369,169 @@ def test_non_inference_host_is_not_intercepted(
         assert result.exit_code == 0, f"stderr: {result.stderr}"
         output = result.stdout.strip()
         assert "Tunnel connection failed: 403 Forbidden" in output
+
+
+# ---------------------------------------------------------------------------
+# Model-source policy tests
+#
+# These exercise the per-route policy that decides how the privacy router
+# treats the client-supplied `model` field. The strongest end-to-end signal
+# comes from the `matching` policy: a mismatched model produces a 400
+# response from the router *before* the mock backend is touched, so the
+# test can rely on the HTTP status without coupling to the mock body.
+# ---------------------------------------------------------------------------
+
+
+_MODEL_SOURCE_MATCHING_MODEL_ID = "mock/model-source-test"
+_MODEL_SOURCE_MATCHING_PROVIDER_NAME = "e2e-model-source-openai"
+
+
+def _exec_chat_request(sb: Sandbox, *, model: str) -> tuple[int, str]:
+    """Send one `/v1/chat/completions` request from inside the sandbox.
+
+    Returns `(http_status, body)`. The body for 400 responses includes the
+    router's `InvalidRequest` detail, which the matching-mode tests assert on.
+    """
+
+    def call(model: str = model) -> str:
+        import json
+        import ssl
+        import urllib.error
+        import urllib.request
+
+        body = json.dumps(
+            {
+                "model": model,
+                "messages": [{"role": "user", "content": "hello"}],
+            }
+        ).encode()
+
+        req = urllib.request.Request(
+            "https://inference.local/v1/chat/completions",
+            data=body,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": "Bearer dummy-key",
+            },
+            method="POST",
+        )
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+
+        try:
+            resp = urllib.request.urlopen(req, timeout=30, context=ctx)
+            return f"{resp.status}|{resp.read().decode()}"
+        except urllib.error.HTTPError as exc:
+            return f"{exc.code}|{exc.read().decode('utf-8', errors='replace')}"
+
+    result = sb.exec_python(call, timeout_seconds=60)
+    assert result.exit_code == 0, f"stderr: {result.stderr}"
+    status_str, _, body = result.stdout.strip().partition("|")
+    return int(status_str), body
+
+
+@pytest.fixture
+def matching_mode_route(
+    inference_client: InferenceRouteClient,
+    sandbox_client: SandboxClient,
+) -> Iterator[str]:
+    """Persist a route configured with `model_source=matching` for the test."""
+    with _cluster_config_lock():
+        previous = _current_cluster_inference(inference_client)
+        _upsert_managed_inference(
+            inference_client,
+            sandbox_client,
+            provider_name=_MODEL_SOURCE_MATCHING_PROVIDER_NAME,
+            provider_type="openai",
+            credential_key="OPENAI_API_KEY",
+            base_url_key="OPENAI_BASE_URL",
+            model_id=_MODEL_SOURCE_MATCHING_MODEL_ID,
+            base_url="mock://e2e-model-source-openai",
+            model_source="matching",
+        )
+        try:
+            yield _MODEL_SOURCE_MATCHING_MODEL_ID
+        finally:
+            _restore_cluster_inference(inference_client, previous)
+
+
+def test_matching_mode_accepts_client_model_equal_to_route(
+    sandbox: Callable[..., Sandbox],
+    matching_mode_route: str,
+) -> None:
+    """`matching` mode lets through a request whose `model` equals `route.model`."""
+    spec = datamodel_pb2.SandboxSpec(policy=_baseline_policy())
+    with sandbox(spec=spec, delete_on_exit=True) as sb:
+        status, body = _exec_chat_request(sb, model=matching_mode_route)
+        assert status == 200, f"expected 200, got {status} body={body}"
+        assert "Hello from openshell mock backend" in body
+
+
+def test_matching_mode_rejects_client_model_mismatch(
+    sandbox: Callable[..., Sandbox],
+    matching_mode_route: str,
+) -> None:
+    """`matching` mode rejects a mismatched `model` with 400 before reaching the backend."""
+    spec = datamodel_pb2.SandboxSpec(policy=_baseline_policy())
+    with sandbox(spec=spec, delete_on_exit=True) as sb:
+        status, body = _exec_chat_request(sb, model="this-model-does-not-exist")
+        assert status == 400, f"expected 400, got {status} body={body}"
+        assert "matching" in body
+        assert "this-model-does-not-exist" in body
+        assert matching_mode_route in body
+
+
+def test_model_source_policy_change_invalidates_sandbox_route_cache(
+    sandbox: Callable[..., Sandbox],
+    inference_client: InferenceRouteClient,
+    sandbox_client: SandboxClient,
+) -> None:
+    """A policy-only update propagates to running sandboxes within the refresh window.
+
+    Regression test for the revision-hash fix: changing only `model_source`
+    must bump the bundle revision, otherwise the sandbox-side route cache
+    skips the update and the new policy never takes effect.
+    """
+    refresh_wait_seconds = 7  # DEFAULT_ROUTE_REFRESH_INTERVAL_SECS (5) + slack.
+
+    spec = datamodel_pb2.SandboxSpec(policy=_baseline_policy())
+    with _cluster_config_lock():
+        previous = _current_cluster_inference(inference_client)
+        try:
+            _upsert_managed_inference(
+                inference_client,
+                sandbox_client,
+                provider_name=_MODEL_SOURCE_MATCHING_PROVIDER_NAME,
+                provider_type="openai",
+                credential_key="OPENAI_API_KEY",
+                base_url_key="OPENAI_BASE_URL",
+                model_id=_MODEL_SOURCE_MATCHING_MODEL_ID,
+                base_url="mock://e2e-model-source-openai",
+                model_source="matching",
+            )
+            with sandbox(spec=spec, delete_on_exit=True) as sb:
+                # Sanity: matching mode rejects the bogus model.
+                status, _ = _exec_chat_request(sb, model="bogus-model")
+                assert status == 400, "matching mode should reject upfront"
+
+                # Flip policy only (provider + model unchanged) to caller.
+                inference_client.set_cluster(
+                    provider_name=_MODEL_SOURCE_MATCHING_PROVIDER_NAME,
+                    model_id=_MODEL_SOURCE_MATCHING_MODEL_ID,
+                    model_source="caller",
+                    no_verify=True,
+                )
+                # Wait for the sandbox to pick up the new bundle revision.
+                import time
+
+                time.sleep(refresh_wait_seconds)
+
+                # Caller mode forwards the bogus model to the backend, which
+                # the mock answers with 200 — the matching gate is gone.
+                status, body = _exec_chat_request(sb, model="bogus-model")
+                assert status == 200, (
+                    f"caller mode should reach the mock backend; got {status} body={body}"
+                )
+        finally:
+            _restore_cluster_inference(inference_client, previous)
