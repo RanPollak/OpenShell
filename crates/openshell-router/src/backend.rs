@@ -188,10 +188,11 @@ fn prepare_backend_request(
         }
     }
 
-    // Apply the route's configured model-source policy to the request body.
-    // This decides whether the client's `model` field is preserved, overwritten
-    // by `route.model`, or rejected on mismatch.  See `ModelSource` for the
-    // semantics of each mode.
+    // Apply the route's configured model-source policy. The public proxy
+    // entry points in `lib.rs` already apply this so mock routes get the
+    // same treatment as real backends; calling it again here keeps the
+    // validation probe path (which bypasses `lib.rs`) working and is a
+    // no-op for already-normalised bodies (the policy is idempotent).
     let body = apply_model_source_policy(&body, route)?;
     builder = builder.body(body);
 
@@ -206,7 +207,7 @@ fn prepare_backend_request(
 ///
 /// A non-JSON body is passed through untouched on every policy — we cannot
 /// inspect a request shape we don't understand.
-fn apply_model_source_policy(
+pub(crate) fn apply_model_source_policy(
     body: &bytes::Bytes,
     route: &ResolvedRoute,
 ) -> Result<bytes::Bytes, RouterError> {

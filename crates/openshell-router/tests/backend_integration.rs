@@ -961,3 +961,69 @@ async fn buffered_proxy_enforces_route_timeout() {
         "error should mention timeout, got: {err}"
     );
 }
+
+#[tokio::test]
+async fn proxy_matching_mode_rejects_mock_route_when_client_model_mismatches() {
+    // Mock routes (`mock://...`) bypass the real backend but must still honour
+    // the route's model-source policy. Otherwise an e2e harness that uses
+    // mock routes to exercise policy enforcement would always see 200 and
+    // would not catch a `matching` regression.
+    let router = Router::new().unwrap();
+    let candidates =
+        mock_candidates_with_source("mock://e2e-policy-check", ModelSource::Matching);
+
+    let body = serde_json::to_vec(&serde_json::json!({
+        "model": "gpt-4o-mini",
+        "messages": [{"role": "user", "content": "Hello"}]
+    }))
+    .unwrap();
+
+    let err = router
+        .proxy_with_candidates(
+            "openai_chat_completions",
+            "POST",
+            "/v1/chat/completions",
+            vec![("content-type".to_string(), "application/json".to_string())],
+            bytes::Bytes::from(body),
+            &candidates,
+        )
+        .await
+        .unwrap_err();
+
+    let openshell_router::RouterError::InvalidRequest(detail) = err else {
+        panic!("expected InvalidRequest, got {err:?}");
+    };
+    assert!(detail.contains("matching"), "{detail}");
+}
+
+#[tokio::test]
+async fn proxy_streaming_matching_mode_rejects_mock_route_when_client_model_mismatches() {
+    let router = Router::new().unwrap();
+    let candidates =
+        mock_candidates_with_source("mock://e2e-policy-check", ModelSource::Matching);
+
+    let body = serde_json::to_vec(&serde_json::json!({
+        "model": "gpt-4o-mini",
+        "messages": [{"role": "user", "content": "Hello"}]
+    }))
+    .unwrap();
+
+    let result = router
+        .proxy_with_candidates_streaming(
+            "openai_chat_completions",
+            "POST",
+            "/v1/chat/completions",
+            vec![("content-type".to_string(), "application/json".to_string())],
+            bytes::Bytes::from(body),
+            &candidates,
+        )
+        .await;
+
+    let Err(err) = result else {
+        panic!("expected error, got success");
+    };
+    let openshell_router::RouterError::InvalidRequest(detail) = err else {
+        panic!("expected InvalidRequest, got {err:?}");
+    };
+    assert!(detail.contains("matching"), "{detail}");
+}

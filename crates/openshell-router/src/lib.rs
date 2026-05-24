@@ -83,6 +83,11 @@ impl Router {
             "routing proxy inference request"
         );
 
+        // Apply the route's model-source policy before the mock branch so
+        // `caller` / `matching` semantics (including `Matching` rejections)
+        // apply uniformly to real and mocked routes.
+        let body = backend::apply_model_source_policy(&body, route)?;
+
         if mock::is_mock_route(route) {
             info!(endpoint = %route.endpoint, "returning mock response");
             return Ok(mock::mock_response(route, &normalized_source));
@@ -126,6 +131,11 @@ impl Router {
             path = %path,
             "routing proxy inference request (streaming)"
         );
+
+        // Apply the route's model-source policy before the mock branch so
+        // `caller` / `matching` semantics (including `Matching` rejections)
+        // apply uniformly to real and mocked routes.
+        let body = backend::apply_model_source_policy(&body, route)?;
 
         if mock::is_mock_route(route) {
             info!(endpoint = %route.endpoint, "returning mock response (buffered)");
