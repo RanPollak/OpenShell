@@ -1077,7 +1077,10 @@ enum InferenceCommands {
         #[arg(long, add = ArgValueCompleter::new(completers::complete_provider_names))]
         provider: String,
 
-        /// Model identifier to force for generation calls.
+        /// Route model identifier. Used as the upstream model under
+        /// `model_source=router`, as the matching target under
+        /// `model_source=matching`, and as the fallback when a client omits
+        /// the field under `model_source=caller`.
         #[arg(long)]
         model: String,
 

@@ -562,7 +562,7 @@ async fn proxy_matching_mode_rejects_null_model() {
     // Explicit `"model": null` is not the same as omitting the field, so
     // `Matching` mode rejects it rather than silently substituting
     // `route.model`. This keeps the policy honest for callers that
-    // accidentally serialise a `None`/`null` model.
+    // accidentally encode a `None`/`null` model.
     let router = Router::new().unwrap();
     let candidates = mock_candidates_with_source("http://unused", ModelSource::Matching);
 

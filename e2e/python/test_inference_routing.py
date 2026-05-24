@@ -11,6 +11,7 @@ hosts like `api.openai.com`.
 from __future__ import annotations
 
 import fcntl
+import time
 from contextlib import contextmanager
 from typing import TYPE_CHECKING
 
@@ -525,8 +526,6 @@ def test_model_source_policy_change_invalidates_sandbox_route_cache(
                     no_verify=True,
                 )
                 # Wait for the sandbox to pick up the new bundle revision.
-                import time
-
                 time.sleep(refresh_wait_seconds)
 
                 # Caller mode forwards the bogus model to the backend, which

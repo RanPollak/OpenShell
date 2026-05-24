@@ -27,12 +27,16 @@ service Inference {
 
 // Persisted cluster inference configuration.
 //
-// Only `provider_name` and `model_id` are stored; endpoint, protocols,
-// credentials, and auth style are resolved from the provider at bundle time.
+// Only `provider_name`, `model_id`, `timeout_secs`, and `model_source` are
+// stored; endpoint, protocols, credentials, and auth style are resolved
+// from the provider at bundle time.
 message ClusterInferenceConfig {
   // Provider record name backing this route.
   string provider_name = 1;
-  // Model identifier to force on generation calls.
+  // Route model identifier. Used as the upstream model under
+  // `model_source=router`, as the matching target under
+  // `model_source=matching`, and as the fallback when a client omits the
+  // field under `model_source=caller`.
   string model_id = 2;
   // Per-route request timeout in seconds. 0 means use default (60s).
   uint64 timeout_secs = 3;
@@ -53,7 +57,10 @@ message InferenceRoute {
 message SetClusterInferenceRequest {
   // Provider record name to use for credentials + endpoint mapping.
   string provider_name = 1;
-  // Model identifier to force on generation calls.
+  // Route model identifier. Used as the upstream model under
+  // `model_source=router`, as the matching target under
+  // `model_source=matching`, and as the fallback when a client omits the
+  // field under `model_source=caller`.
   string model_id = 2;
   // Route name to target. Empty string defaults to "inference.local" (user-facing).
   // Use "sandbox-system" for the sandbox system-level inference route.
