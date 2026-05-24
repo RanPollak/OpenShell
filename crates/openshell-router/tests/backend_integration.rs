@@ -520,6 +520,78 @@ async fn proxy_caller_mode_forwards_non_string_model_verbatim() {
 }
 
 #[tokio::test]
+async fn proxy_caller_mode_forwards_null_model_verbatim() {
+    // Explicit `"model": null` is a malformed request from the caller, not
+    // an omission. `Caller` mode hands it off to the upstream so the error
+    // comes from the provider, not from a silent router rewrite.
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .and(body_partial_json(serde_json::json!({"model": null})))
+        .respond_with(ResponseTemplate::new(200).set_body_string("{}"))
+        .mount(&mock_server)
+        .await;
+
+    let router = Router::new().unwrap();
+    let candidates = mock_candidates_with_source(&mock_server.uri(), ModelSource::Caller);
+
+    let body = serde_json::to_vec(&serde_json::json!({
+        "model": null,
+        "messages": [{"role": "user", "content": "Hello"}]
+    }))
+    .unwrap();
+
+    let response = router
+        .proxy_with_candidates(
+            "openai_chat_completions",
+            "POST",
+            "/v1/chat/completions",
+            vec![("content-type".to_string(), "application/json".to_string())],
+            bytes::Bytes::from(body),
+            &candidates,
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status, 200);
+}
+
+#[tokio::test]
+async fn proxy_matching_mode_rejects_null_model() {
+    // Explicit `"model": null` is not the same as omitting the field, so
+    // `Matching` mode rejects it rather than silently substituting
+    // `route.model`. This keeps the policy honest for callers that
+    // accidentally serialise a `None`/`null` model.
+    let router = Router::new().unwrap();
+    let candidates = mock_candidates_with_source("http://unused", ModelSource::Matching);
+
+    let body = serde_json::to_vec(&serde_json::json!({
+        "model": null,
+        "messages": [{"role": "user", "content": "Hello"}]
+    }))
+    .unwrap();
+
+    let err = router
+        .proxy_with_candidates(
+            "openai_chat_completions",
+            "POST",
+            "/v1/chat/completions",
+            vec![("content-type".to_string(), "application/json".to_string())],
+            bytes::Bytes::from(body),
+            &candidates,
+        )
+        .await
+        .unwrap_err();
+
+    let openshell_router::RouterError::InvalidRequest(detail) = err else {
+        panic!("expected InvalidRequest, got {err:?}");
+    };
+    assert!(detail.contains("non-empty string"), "{detail}");
+    assert!(detail.contains("matching"), "{detail}");
+}
+
+#[tokio::test]
 async fn proxy_inserts_model_when_absent_from_body() {
     let mock_server = MockServer::start().await;
 

@@ -128,6 +128,7 @@ def _restore_cluster_inference(
     inference_client.set_cluster(
         provider_name=previous.provider_name,
         model_id=previous.model_id,
+        timeout_secs=previous.timeout_secs,
         model_source=previous.model_source,
         # Teardown restores prior shared state as-is, even if the previous
         # route is intentionally unreachable or no longer verifiable.

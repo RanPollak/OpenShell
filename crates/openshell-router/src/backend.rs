@@ -224,9 +224,10 @@ fn apply_model_source_policy(
     }
 
     let client_model = match obj.get("model") {
-        None | Some(serde_json::Value::Null) => ClientModel::Missing,
+        None => ClientModel::Missing,
         Some(serde_json::Value::String(s)) if s.is_empty() => ClientModel::Missing,
         Some(serde_json::Value::String(s)) => ClientModel::Valid(s.clone()),
+        // Explicit `null` is a wrong-type marker, not an omission.
         Some(_) => ClientModel::WrongType,
     };
 

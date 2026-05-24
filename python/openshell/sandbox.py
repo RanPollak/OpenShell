@@ -388,6 +388,7 @@ class ClusterInferenceConfig:
     provider_name: str
     model_id: str
     version: int
+    timeout_secs: int = 0
     model_source: str = ""
 
 
@@ -408,6 +409,7 @@ class InferenceRouteClient:
         provider_name: str,
         model_id: str,
         no_verify: bool = False,
+        timeout_secs: int = 0,
         model_source: str = "",
     ) -> ClusterInferenceConfig:
         response = self._stub.SetClusterInference(
@@ -415,6 +417,7 @@ class InferenceRouteClient:
                 provider_name=provider_name,
                 model_id=model_id,
                 no_verify=no_verify,
+                timeout_secs=timeout_secs,
                 model_source=model_source,
             ),
             timeout=self._timeout,
@@ -423,6 +426,7 @@ class InferenceRouteClient:
             provider_name=response.provider_name,
             model_id=response.model_id,
             version=response.version,
+            timeout_secs=response.timeout_secs,
             model_source=response.model_source,
         )
 
@@ -435,6 +439,7 @@ class InferenceRouteClient:
             provider_name=response.provider_name,
             model_id=response.model_id,
             version=response.version,
+            timeout_secs=response.timeout_secs,
             model_source=response.model_source,
         )
 
