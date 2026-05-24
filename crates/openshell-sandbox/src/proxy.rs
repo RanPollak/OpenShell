@@ -1718,6 +1718,10 @@ fn router_error_to_http(err: &openshell_router::RouterError) -> (u16, String) {
         RouterError::NoCompatibleRoute(_) => {
             (400, "no compatible inference route available".to_string())
         }
+        // `InvalidRequest` is a per-request, caller-visible policy rejection
+        // (e.g. ModelSource::Matching saw a mismatched `model` field).
+        // Surface the detailed reason so SDK clients can fix the request.
+        RouterError::InvalidRequest(detail) => (400, detail.clone()),
         RouterError::Unauthorized(_) => (401, "unauthorized".to_string()),
         RouterError::UpstreamUnavailable(_) => (503, "inference service unavailable".to_string()),
         RouterError::UpstreamProtocol(_) | RouterError::Internal(_) => {
@@ -4966,6 +4970,7 @@ network_policies:
                     "x-model-id".to_string(),
                 ],
                 timeout: openshell_router::config::DEFAULT_ROUTE_TIMEOUT,
+                model_source: openshell_router::config::ModelSource::default(),
             }],
             vec![],
         );
@@ -5022,6 +5027,7 @@ network_policies:
             default_headers: vec![],
             passthrough_headers: vec![],
             timeout: openshell_router::config::DEFAULT_ROUTE_TIMEOUT,
+            model_source: openshell_router::config::ModelSource::default(),
         }
     }
 

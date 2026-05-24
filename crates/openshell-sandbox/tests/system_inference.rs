@@ -8,7 +8,7 @@
 //! mock backend → response.
 
 use openshell_router::Router;
-use openshell_router::config::{AuthHeader, ResolvedRoute};
+use openshell_router::config::{AuthHeader, ModelSource, ResolvedRoute};
 use openshell_sandbox::proxy::InferenceContext;
 
 fn make_system_route() -> ResolvedRoute {
@@ -22,6 +22,7 @@ fn make_system_route() -> ResolvedRoute {
         default_headers: Vec::new(),
         passthrough_headers: Vec::new(),
         timeout: openshell_router::config::DEFAULT_ROUTE_TIMEOUT,
+        model_source: ModelSource::default(),
     }
 }
 
@@ -36,6 +37,7 @@ fn make_user_route() -> ResolvedRoute {
         default_headers: Vec::new(),
         passthrough_headers: Vec::new(),
         timeout: openshell_router::config::DEFAULT_ROUTE_TIMEOUT,
+        model_source: ModelSource::default(),
     }
 }
 
@@ -133,6 +135,7 @@ async fn system_inference_with_anthropic_protocol() {
             "anthropic-beta".to_string(),
         ],
         timeout: openshell_router::config::DEFAULT_ROUTE_TIMEOUT,
+        model_source: ModelSource::default(),
     };
 
     let ctx = InferenceContext::new(patterns, router, vec![], vec![system_route]);

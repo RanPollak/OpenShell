@@ -5,7 +5,7 @@ use serde::Deserialize;
 use std::path::Path;
 use std::time::Duration;
 
-pub use openshell_core::inference::AuthHeader;
+pub use openshell_core::inference::{AuthHeader, ModelSource};
 
 use crate::RouterError;
 
@@ -29,6 +29,11 @@ pub struct RouteConfig {
     pub api_key: Option<String>,
     #[serde(default)]
     pub api_key_env: Option<String>,
+    /// Policy controlling how the router treats the client-supplied `model`
+    /// field. Accepts `router` (default), `caller`, or `matching`. See
+    /// [`ModelSource`] for the semantics of each mode.
+    #[serde(default)]
+    pub model_source: Option<String>,
 }
 
 /// A fully-resolved route ready for the router to forward requests.
@@ -52,6 +57,10 @@ pub struct ResolvedRoute {
     pub passthrough_headers: Vec<String>,
     /// Per-request timeout for proxied inference calls.
     pub timeout: Duration,
+    /// Policy controlling how the router treats the client-supplied `model`
+    /// field. Default is [`ModelSource::Router`] to preserve historical
+    /// behaviour.
+    pub model_source: ModelSource,
 }
 
 impl std::fmt::Debug for ResolvedRoute {
@@ -66,6 +75,7 @@ impl std::fmt::Debug for ResolvedRoute {
             .field("default_headers", &self.default_headers)
             .field("passthrough_headers", &self.passthrough_headers)
             .field("timeout", &self.timeout)
+            .field("model_source", &self.model_source)
             .finish()
     }
 }
@@ -131,6 +141,16 @@ impl RouteConfig {
         let (auth, default_headers, passthrough_headers) =
             route_headers_from_provider_type(self.provider_type.as_deref());
 
+        let model_source = match &self.model_source {
+            None => ModelSource::default(),
+            Some(token) => ModelSource::parse(token).ok_or_else(|| {
+                RouterError::Internal(format!(
+                    "route '{}' has invalid model_source '{token}'; expected one of router, caller, matching",
+                    self.name,
+                ))
+            })?,
+        };
+
         Ok(ResolvedRoute {
             name: self.name.clone(),
             endpoint: self.endpoint.clone(),
@@ -141,6 +161,7 @@ impl RouteConfig {
             default_headers,
             passthrough_headers,
             timeout: DEFAULT_ROUTE_TIMEOUT,
+            model_source,
         })
     }
 }
@@ -274,6 +295,7 @@ routes:
             default_headers: Vec::new(),
             passthrough_headers: Vec::new(),
             timeout: DEFAULT_ROUTE_TIMEOUT,
+            model_source: ModelSource::default(),
         };
         let debug_output = format!("{route:?}");
         assert!(

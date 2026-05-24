@@ -21,6 +21,73 @@ pub enum AuthHeader {
 }
 
 // ---------------------------------------------------------------------------
+// Model-source policy
+// ---------------------------------------------------------------------------
+
+/// Per-route policy that decides how the inference router treats the client's
+/// `model` field when forwarding a request to the upstream provider.
+///
+/// Motivated by [#994]: silently overwriting the client-supplied model masked
+/// typos and stale model references — the upstream provider's "unknown model"
+/// error never reached the caller. Making the policy explicit lets operators
+/// pick between provider-swap convenience and request-integrity guarantees
+/// without changing the default.
+///
+/// In all three modes, a missing or empty client model falls back to
+/// `route.model`, because every supported upstream provider requires a
+/// non-empty `model` field.
+///
+/// [#994]: https://github.com/NVIDIA/NemoClaw/issues/994
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ModelSource {
+    /// Existing behaviour: the route's configured model wins, even when the
+    /// client sent a different value. A mismatch is logged at `warn` level so
+    /// operators can spot accidental typos without rejecting the request.
+    /// This is the default to keep the historical provider-swap workflow
+    /// working without explicit opt-in.
+    #[default]
+    Router,
+    /// The client-supplied model is forwarded to the upstream provider
+    /// unchanged. Restores the standard "unknown model" error surface so
+    /// caller-side typos and stale references fail loudly.
+    Caller,
+    /// Like `Caller`, but the router rejects the request with an error when
+    /// the client-supplied model does not match `route.model`. Use this when
+    /// the operator wants to enforce a single configured model.
+    Matching,
+}
+
+impl ModelSource {
+    /// Parse a case-insensitive token (`router` / `caller` / `matching`) into
+    /// a [`ModelSource`]. Returns `None` for any other value so callers can
+    /// surface a per-flag validation error.
+    pub fn parse(token: &str) -> Option<Self> {
+        match token.trim().to_ascii_lowercase().as_str() {
+            "router" => Some(Self::Router),
+            "caller" => Some(Self::Caller),
+            "matching" => Some(Self::Matching),
+            _ => None,
+        }
+    }
+
+    /// Canonical token used by the CLI, gRPC string fields, and the YAML
+    /// router config.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Router => "router",
+            Self::Caller => "caller",
+            Self::Matching => "matching",
+        }
+    }
+}
+
+impl std::fmt::Display for ModelSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Inference provider profiles
 // ---------------------------------------------------------------------------
 

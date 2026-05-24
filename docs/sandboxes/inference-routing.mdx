@@ -191,7 +191,15 @@ response = client.chat.completions.create(
 )
 ```
 
-The client-supplied `model` and `api_key` values are not sent upstream. The privacy router injects the real credentials from the configured provider and rewrites the model before forwarding. Some SDKs require a non-empty API key even though `inference.local` does not use the sandbox-provided value. In those cases, pass any placeholder such as `test` or `unused`.
+The client-supplied `api_key` is never sent upstream. The privacy router injects the real credentials from the configured provider before forwarding. Some SDKs require a non-empty API key even though `inference.local` does not use the sandbox-provided value. In those cases, pass any placeholder such as `test` or `unused`.
+
+How the client-supplied `model` field is treated depends on the route's `model_source` policy, which the operator selects with `openshell inference set --model-source <policy>`:
+
+- `router` (default): the client-supplied `model` is overwritten with the route's configured model before forwarding. A mismatch is logged but not rejected, so an agent that hardcodes `gpt-4o` keeps working when the operator swaps to a different upstream model. This preserves the historical behaviour.
+- `caller`: the client-supplied `model` is forwarded to the upstream provider verbatim. Use this when typos or stale model references in caller code should surface as the upstream's "unknown model" error instead of being silently rewritten.
+- `matching`: like `caller`, but the router rejects any request whose `model` differs from the route's configured model. Use this to enforce a single model for the entire route.
+
+A missing or empty `model` field always falls back to the route's configured model, regardless of policy, because every supported upstream provider requires a non-empty `model`.
 
 Use this endpoint when inference should stay local to the host for privacy and security reasons. External providers that should be reached directly belong in `network_policies` instead.
 

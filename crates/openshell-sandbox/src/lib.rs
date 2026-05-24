@@ -1267,6 +1267,12 @@ pub(crate) fn bundle_to_resolved_routes(
             } else {
                 Duration::from_secs(r.timeout_secs)
             };
+            // Empty `model_source` from the bundle means the historical
+            // default (`router`). Unknown tokens are accepted defensively —
+            // we'd rather forward the request with default policy than
+            // refuse to serve sandboxes after a future proto extension.
+            let model_source =
+                openshell_core::inference::ModelSource::parse(&r.model_source).unwrap_or_default();
             openshell_router::config::ResolvedRoute {
                 name: r.name.clone(),
                 endpoint: r.base_url.clone(),
@@ -1277,6 +1283,7 @@ pub(crate) fn bundle_to_resolved_routes(
                 default_headers,
                 passthrough_headers,
                 timeout,
+                model_source,
             }
         })
         .collect()
@@ -2652,6 +2659,7 @@ mod tests {
                     ],
                     provider_type: "openai".to_string(),
                     timeout_secs: 0,
+                    model_source: String::new(),
                 },
                 openshell_core::proto::ResolvedRoute {
                     name: "local".to_string(),
@@ -2661,6 +2669,7 @@ mod tests {
                     protocols: vec!["openai_chat_completions".to_string()],
                     provider_type: String::new(),
                     timeout_secs: 120,
+                    model_source: String::new(),
                 },
             ],
             revision: "abc123".to_string(),
@@ -2721,6 +2730,7 @@ mod tests {
                 protocols: vec!["openai_chat_completions".to_string()],
                 provider_type: "openai".to_string(),
                 timeout_secs: 0,
+                model_source: String::new(),
             }],
             revision: "rev".to_string(),
             generated_at_ms: 0,
@@ -2743,6 +2753,7 @@ mod tests {
                 default_headers: vec![],
                 passthrough_headers: vec![],
                 timeout: openshell_router::config::DEFAULT_ROUTE_TIMEOUT,
+                model_source: openshell_core::inference::ModelSource::default(),
             },
             openshell_router::config::ResolvedRoute {
                 name: "sandbox-system".to_string(),
@@ -2754,6 +2765,7 @@ mod tests {
                 default_headers: vec![],
                 passthrough_headers: vec![],
                 timeout: openshell_router::config::DEFAULT_ROUTE_TIMEOUT,
+                model_source: openshell_core::inference::ModelSource::default(),
             },
         ];
 
@@ -3044,6 +3056,7 @@ filesystem_policy:
             default_headers: vec![],
             passthrough_headers: vec![],
             timeout: openshell_router::config::DEFAULT_ROUTE_TIMEOUT,
+            model_source: openshell_core::inference::ModelSource::default(),
         }];
 
         let cache = Arc::new(RwLock::new(routes));

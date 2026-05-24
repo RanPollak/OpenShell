@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::RouterError;
-use crate::config::{AuthHeader, ResolvedRoute};
+use crate::config::{AuthHeader, ModelSource, ResolvedRoute};
 use crate::mock;
 use std::collections::HashSet;
 
@@ -188,23 +188,99 @@ fn prepare_backend_request(
         }
     }
 
-    // Set the "model" field in the JSON body to the route's configured model so the
-    // backend receives the correct model ID regardless of what the client sent.
-    let body = match serde_json::from_slice::<serde_json::Value>(&body) {
-        Ok(mut json) => {
-            if let Some(obj) = json.as_object_mut() {
+    // Apply the route's configured model-source policy to the request body.
+    // This decides whether the client's `model` field is preserved, overwritten
+    // by `route.model`, or rejected on mismatch.  See `ModelSource` for the
+    // semantics of each mode and #994 for the bug that motivated making the
+    // policy explicit.
+    let body = apply_model_source_policy(&body, route)?;
+    builder = builder.body(body);
+
+    Ok((builder, url))
+}
+
+/// Apply the route's [`ModelSource`] policy to the request body.
+///
+/// Returns the (possibly rewritten) body, or a [`RouterError`] when the
+/// `Matching` policy detects a mismatch between the client-supplied model
+/// and `route.model`.
+///
+/// A non-JSON body is passed through untouched on every policy — we cannot
+/// inspect a request shape we don't understand.
+fn apply_model_source_policy(
+    body: &bytes::Bytes,
+    route: &ResolvedRoute,
+) -> Result<bytes::Bytes, RouterError> {
+    let Ok(mut json) = serde_json::from_slice::<serde_json::Value>(body) else {
+        return Ok(body.clone());
+    };
+    let Some(obj) = json.as_object_mut() else {
+        return Ok(body.clone());
+    };
+
+    let client_model = obj
+        .get("model")
+        .and_then(|v| match v {
+            serde_json::Value::String(s) if !s.is_empty() => Some(s.as_str()),
+            _ => None,
+        })
+        .map(str::to_owned);
+
+    match route.model_source {
+        ModelSource::Router => {
+            if let Some(client) = client_model.as_deref()
+                && client != route.model
+            {
+                tracing::warn!(
+                    route = %route.name,
+                    client_model = %client,
+                    route_model = %route.model,
+                    "client model field does not match route.model; rewriting per ModelSource::Router policy",
+                );
+            }
+            obj.insert(
+                "model".to_string(),
+                serde_json::Value::String(route.model.clone()),
+            );
+        }
+        ModelSource::Caller => {
+            // Preserve the caller's `model` when present. Fall back to
+            // `route.model` only when missing or empty so upstream providers
+            // (which all require a non-empty `model`) still see a usable
+            // value.
+            if client_model.is_none() {
                 obj.insert(
                     "model".to_string(),
                     serde_json::Value::String(route.model.clone()),
                 );
             }
-            bytes::Bytes::from(serde_json::to_vec(&json).unwrap_or_else(|_| body.to_vec()))
         }
-        Err(_) => body,
-    };
-    builder = builder.body(body);
+        ModelSource::Matching => {
+            match client_model.as_deref() {
+                Some(client) if client != route.model => {
+                    return Err(RouterError::InvalidRequest(format!(
+                        "route '{}' is configured with model_source=matching; \
+                         client model '{client}' does not match route.model '{}'",
+                        route.name, route.model,
+                    )));
+                }
+                Some(_) => {
+                    // Equal — nothing to do.
+                }
+                None => {
+                    // Missing/empty — fill in the route's model.
+                    obj.insert(
+                        "model".to_string(),
+                        serde_json::Value::String(route.model.clone()),
+                    );
+                }
+            }
+        }
+    }
 
-    Ok((builder, url))
+    Ok(bytes::Bytes::from(
+        serde_json::to_vec(&json).unwrap_or_else(|_| body.to_vec()),
+    ))
 }
 
 /// Send an error-mapped request, shared by both buffered and streaming paths.
@@ -394,7 +470,8 @@ async fn try_validation_request(
             }
             RouterError::RouteNotFound(details)
             | RouterError::NoCompatibleRoute(details)
-            | RouterError::Unauthorized(details) => ValidationFailure {
+            | RouterError::Unauthorized(details)
+            | RouterError::InvalidRequest(details) => ValidationFailure {
                 kind: ValidationFailureKind::Unexpected,
                 details,
             },
@@ -524,7 +601,7 @@ fn build_backend_url(endpoint: &str, path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{ValidationFailureKind, build_backend_url, verify_backend_endpoint};
-    use crate::config::ResolvedRoute;
+    use crate::config::{ModelSource, ResolvedRoute};
     use openshell_core::inference::AuthHeader;
     use wiremock::matchers::{body_partial_json, header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -567,6 +644,7 @@ mod tests {
                 "anthropic-beta".to_string(),
             ],
             timeout: crate::config::DEFAULT_ROUTE_TIMEOUT,
+            model_source: ModelSource::default(),
         }
     }
 
@@ -582,6 +660,7 @@ mod tests {
             default_headers: Vec::new(),
             passthrough_headers: vec!["openai-organization".to_string()],
             timeout: crate::config::DEFAULT_ROUTE_TIMEOUT,
+            model_source: ModelSource::default(),
         };
 
         let kept = super::sanitize_request_headers(

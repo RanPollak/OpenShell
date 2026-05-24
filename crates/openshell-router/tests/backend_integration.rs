@@ -2,11 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use openshell_router::Router;
-use openshell_router::config::{AuthHeader, ResolvedRoute, RouteConfig, RouterConfig};
+use openshell_router::config::{AuthHeader, ModelSource, ResolvedRoute, RouteConfig, RouterConfig};
 use wiremock::matchers::{bearer_token, body_partial_json, header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 fn mock_candidates(base_url: &str) -> Vec<ResolvedRoute> {
+    mock_candidates_with_source(base_url, ModelSource::default())
+}
+
+fn mock_candidates_with_source(base_url: &str, model_source: ModelSource) -> Vec<ResolvedRoute> {
     vec![ResolvedRoute {
         name: "inference.local".to_string(),
         endpoint: base_url.to_string(),
@@ -17,6 +21,7 @@ fn mock_candidates(base_url: &str) -> Vec<ResolvedRoute> {
         default_headers: Vec::new(),
         passthrough_headers: vec!["openai-organization".to_string(), "x-model-id".to_string()],
         timeout: openshell_router::config::DEFAULT_ROUTE_TIMEOUT,
+        model_source,
     }]
 }
 
@@ -121,6 +126,7 @@ async fn proxy_no_compatible_route_returns_error() {
         default_headers: Vec::new(),
         passthrough_headers: Vec::new(),
         timeout: openshell_router::config::DEFAULT_ROUTE_TIMEOUT,
+        model_source: ModelSource::default(),
     }];
 
     let err = router
@@ -217,6 +223,7 @@ async fn proxy_mock_route_returns_canned_response() {
         default_headers: Vec::new(),
         passthrough_headers: Vec::new(),
         timeout: openshell_router::config::DEFAULT_ROUTE_TIMEOUT,
+        model_source: ModelSource::default(),
     }];
 
     let body = serde_json::to_vec(&serde_json::json!({
@@ -247,10 +254,13 @@ async fn proxy_mock_route_returns_canned_response() {
 }
 
 #[tokio::test]
-async fn proxy_overrides_model_in_request_body() {
+async fn proxy_router_mode_overrides_client_supplied_model() {
+    // Default model-source is `Router` — the historical behaviour. The
+    // client's `model` is replaced with `route.model` before forwarding so
+    // operators can swap upstream models without reconfiguring agents. A
+    // mismatch is logged but not rejected; see #994 for the trade-off.
     let mock_server = MockServer::start().await;
 
-    // The mock expects the route's model, NOT the client's original model
     Mock::given(method("POST"))
         .and(path("/v1/chat/completions"))
         .and(body_partial_json(serde_json::json!({
@@ -261,9 +271,9 @@ async fn proxy_overrides_model_in_request_body() {
         .await;
 
     let router = Router::new().unwrap();
-    let candidates = mock_candidates(&mock_server.uri());
+    let candidates = mock_candidates_with_source(&mock_server.uri(), ModelSource::Router);
 
-    // Client sends "gpt-4o-mini" but route is configured with "meta/llama-3.1-8b-instruct"
+    // Client sends "gpt-4o-mini"; route is configured with "meta/llama-3.1-8b-instruct".
     let body = serde_json::to_vec(&serde_json::json!({
         "model": "gpt-4o-mini",
         "messages": [{"role": "user", "content": "Hello"}]
@@ -283,6 +293,160 @@ async fn proxy_overrides_model_in_request_body() {
         .unwrap();
 
     assert_eq!(response.status, 200);
+}
+
+#[tokio::test]
+async fn proxy_caller_mode_preserves_client_supplied_model() {
+    // `Caller` mode forwards the client's `model` verbatim. This is the
+    // mode operators pick when they want upstream "unknown model" errors
+    // to surface back to the caller instead of being silently rewritten
+    // (#994).
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .and(body_partial_json(serde_json::json!({
+            "model": "gpt-4o-mini"
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_string("{}"))
+        .mount(&mock_server)
+        .await;
+
+    let router = Router::new().unwrap();
+    let candidates = mock_candidates_with_source(&mock_server.uri(), ModelSource::Caller);
+
+    let body = serde_json::to_vec(&serde_json::json!({
+        "model": "gpt-4o-mini",
+        "messages": [{"role": "user", "content": "Hello"}]
+    }))
+    .unwrap();
+
+    let response = router
+        .proxy_with_candidates(
+            "openai_chat_completions",
+            "POST",
+            "/v1/chat/completions",
+            vec![("content-type".to_string(), "application/json".to_string())],
+            bytes::Bytes::from(body),
+            &candidates,
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status, 200);
+}
+
+#[tokio::test]
+async fn proxy_caller_mode_falls_back_to_route_model_when_client_sends_empty() {
+    // Empty/missing `model` from the client is filled in with `route.model`
+    // regardless of mode — every supported upstream provider rejects an
+    // empty `model`, so falling back is the only sensible behaviour.
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .and(body_partial_json(serde_json::json!({
+            "model": "meta/llama-3.1-8b-instruct"
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_string("{}"))
+        .mount(&mock_server)
+        .await;
+
+    let router = Router::new().unwrap();
+    let candidates = mock_candidates_with_source(&mock_server.uri(), ModelSource::Caller);
+
+    let body = serde_json::to_vec(&serde_json::json!({
+        "model": "",
+        "messages": [{"role": "user", "content": "Hello"}]
+    }))
+    .unwrap();
+
+    let response = router
+        .proxy_with_candidates(
+            "openai_chat_completions",
+            "POST",
+            "/v1/chat/completions",
+            vec![("content-type".to_string(), "application/json".to_string())],
+            bytes::Bytes::from(body),
+            &candidates,
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status, 200);
+}
+
+#[tokio::test]
+async fn proxy_matching_mode_accepts_client_model_equal_to_route() {
+    // `Matching` mode permits the request only when the client's `model`
+    // exactly equals `route.model`. The body is forwarded unchanged.
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .and(body_partial_json(serde_json::json!({
+            "model": "meta/llama-3.1-8b-instruct"
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_string("{}"))
+        .mount(&mock_server)
+        .await;
+
+    let router = Router::new().unwrap();
+    let candidates = mock_candidates_with_source(&mock_server.uri(), ModelSource::Matching);
+
+    let body = serde_json::to_vec(&serde_json::json!({
+        "model": "meta/llama-3.1-8b-instruct",
+        "messages": [{"role": "user", "content": "Hello"}]
+    }))
+    .unwrap();
+
+    let response = router
+        .proxy_with_candidates(
+            "openai_chat_completions",
+            "POST",
+            "/v1/chat/completions",
+            vec![("content-type".to_string(), "application/json".to_string())],
+            bytes::Bytes::from(body),
+            &candidates,
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status, 200);
+}
+
+#[tokio::test]
+async fn proxy_matching_mode_rejects_client_model_mismatch() {
+    // `Matching` mode is the strict enforcement option for operators who
+    // want a single configured model. A mismatched client model produces
+    // an `InvalidRequest` error before the upstream provider is touched.
+    let router = Router::new().unwrap();
+    let candidates = mock_candidates_with_source("http://unused", ModelSource::Matching);
+
+    let body = serde_json::to_vec(&serde_json::json!({
+        "model": "gpt-4o-mini",
+        "messages": [{"role": "user", "content": "Hello"}]
+    }))
+    .unwrap();
+
+    let err = router
+        .proxy_with_candidates(
+            "openai_chat_completions",
+            "POST",
+            "/v1/chat/completions",
+            vec![("content-type".to_string(), "application/json".to_string())],
+            bytes::Bytes::from(body),
+            &candidates,
+        )
+        .await
+        .unwrap_err();
+
+    let openshell_router::RouterError::InvalidRequest(detail) = err else {
+        panic!("expected InvalidRequest, got {err:?}");
+    };
+    assert!(detail.contains("gpt-4o-mini"), "{detail}");
+    assert!(detail.contains("meta/llama-3.1-8b-instruct"), "{detail}");
+    assert!(detail.contains("matching"), "{detail}");
 }
 
 #[tokio::test]
@@ -356,6 +520,7 @@ async fn proxy_uses_x_api_key_for_anthropic_route() {
             "anthropic-beta".to_string(),
         ],
         timeout: openshell_router::config::DEFAULT_ROUTE_TIMEOUT,
+        model_source: ModelSource::default(),
     }];
 
     let body = serde_json::to_vec(&serde_json::json!({
@@ -419,6 +584,7 @@ async fn proxy_anthropic_does_not_send_bearer_auth() {
             "anthropic-beta".to_string(),
         ],
         timeout: openshell_router::config::DEFAULT_ROUTE_TIMEOUT,
+        model_source: ModelSource::default(),
     }];
 
     let response = router
@@ -468,6 +634,7 @@ async fn proxy_forwards_client_anthropic_version_header() {
             "anthropic-beta".to_string(),
         ],
         timeout: openshell_router::config::DEFAULT_ROUTE_TIMEOUT,
+        model_source: ModelSource::default(),
     }];
 
     let body = serde_json::to_vec(&serde_json::json!({
@@ -511,6 +678,7 @@ fn config_resolves_routes_with_protocol() {
             protocols: vec!["openai_chat_completions".to_string()],
             api_key: Some("key".to_string()),
             api_key_env: None,
+            model_source: None,
         }],
     };
     let routes = config.resolve_routes().unwrap();
@@ -561,6 +729,7 @@ async fn streaming_proxy_completes_despite_exceeding_route_timeout() {
         // Route timeout shorter than the backend delay — streaming must
         // NOT be constrained by this.
         timeout: Duration::from_secs(1),
+        model_source: ModelSource::default(),
     }];
 
     let body = serde_json::to_vec(&serde_json::json!({
@@ -623,6 +792,7 @@ async fn buffered_proxy_enforces_route_timeout() {
         default_headers: Vec::new(),
         passthrough_headers: Vec::new(),
         timeout: Duration::from_secs(1),
+        model_source: ModelSource::default(),
     }];
 
     let body = serde_json::to_vec(&serde_json::json!({

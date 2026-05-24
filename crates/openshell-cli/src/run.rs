@@ -5049,6 +5049,7 @@ pub async fn provider_delete(server: &str, names: &[String], tls: &TlsOptions) -
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn gateway_inference_set(
     server: &str,
     provider_name: &str,
@@ -5056,8 +5057,10 @@ pub async fn gateway_inference_set(
     route_name: &str,
     no_verify: bool,
     timeout_secs: u64,
+    model_source: Option<&str>,
     tls: &TlsOptions,
 ) -> Result<()> {
+    let model_source = normalize_model_source_flag(model_source)?;
     let progress = if std::io::stdout().is_terminal() {
         let spinner = ProgressBar::new_spinner();
         spinner.set_style(
@@ -5080,6 +5083,7 @@ pub async fn gateway_inference_set(
             verify: false,
             no_verify,
             timeout_secs,
+            model_source,
         })
         .await;
 
@@ -5102,6 +5106,7 @@ pub async fn gateway_inference_set(
     println!("  {} {}", "Model:".dimmed(), configured.model_id);
     println!("  {} {}", "Version:".dimmed(), configured.version);
     print_timeout(configured.timeout_secs);
+    print_model_source(&configured.model_source);
     if configured.validation_performed {
         println!("  {}", "Validated Endpoints:".dimmed());
         for endpoint in configured.validated_endpoints {
@@ -5111,6 +5116,31 @@ pub async fn gateway_inference_set(
     Ok(())
 }
 
+/// Validate the CLI `--model-source` flag and normalize it to the canonical
+/// lowercase token expected by the gateway proto.  Returns an empty string
+/// when the operator did not pass the flag so the server keeps the existing
+/// persisted policy.
+fn normalize_model_source_flag(model_source: Option<&str>) -> Result<String> {
+    let Some(raw) = model_source else {
+        return Ok(String::new());
+    };
+    openshell_core::inference::ModelSource::parse(raw)
+        .map(|parsed| parsed.as_str().to_string())
+        .ok_or_else(|| {
+            miette::miette!(
+                "invalid --model-source '{raw}'; expected one of router, caller, matching",
+            )
+        })
+}
+
+fn print_model_source(model_source: &str) {
+    if model_source.is_empty() {
+        return;
+    }
+    println!("  {} {}", "Model source:".dimmed(), model_source);
+}
+
+#[allow(clippy::too_many_arguments)]
 pub async fn gateway_inference_update(
     server: &str,
     provider_name: Option<&str>,
@@ -5118,11 +5148,16 @@ pub async fn gateway_inference_update(
     route_name: &str,
     no_verify: bool,
     timeout_secs: Option<u64>,
+    model_source: Option<&str>,
     tls: &TlsOptions,
 ) -> Result<()> {
-    if provider_name.is_none() && model_id.is_none() && timeout_secs.is_none() {
+    if provider_name.is_none()
+        && model_id.is_none()
+        && timeout_secs.is_none()
+        && model_source.is_none()
+    {
         return Err(miette::miette!(
-            "at least one of --provider, --model, or --timeout must be specified"
+            "at least one of --provider, --model, --timeout, or --model-source must be specified"
         ));
     }
 
@@ -5140,6 +5175,13 @@ pub async fn gateway_inference_update(
     let provider = provider_name.unwrap_or(&current.provider_name);
     let model = model_id.unwrap_or(&current.model_id);
     let timeout = timeout_secs.unwrap_or(current.timeout_secs);
+    // Preserve the persisted policy when the operator did not pass
+    // `--model-source`; otherwise validate the flag once at the CLI boundary
+    // before sending it to the gateway.
+    let resolved_model_source = match model_source {
+        Some(raw) => normalize_model_source_flag(Some(raw))?,
+        None => current.model_source.clone(),
+    };
 
     let progress = if std::io::stdout().is_terminal() {
         let spinner = ProgressBar::new_spinner();
@@ -5162,6 +5204,7 @@ pub async fn gateway_inference_update(
             verify: false,
             no_verify,
             timeout_secs: timeout,
+            model_source: resolved_model_source,
         })
         .await;
 
@@ -5184,6 +5227,7 @@ pub async fn gateway_inference_update(
     println!("  {} {}", "Model:".dimmed(), configured.model_id);
     println!("  {} {}", "Version:".dimmed(), configured.version);
     print_timeout(configured.timeout_secs);
+    print_model_source(&configured.model_source);
     if configured.validation_performed {
         println!("  {}", "Validated Endpoints:".dimmed());
         for endpoint in configured.validated_endpoints {
@@ -5221,6 +5265,7 @@ pub async fn gateway_inference_get(
         println!("  {} {}", "Model:".dimmed(), configured.model_id);
         println!("  {} {}", "Version:".dimmed(), configured.version);
         print_timeout(configured.timeout_secs);
+        print_model_source(&configured.model_source);
     } else {
         // Show both routes by default.
         print_inference_route(&mut client, "Gateway inference", "").await;
@@ -5249,6 +5294,7 @@ async fn print_inference_route(
             println!("  {} {}", "Model:".dimmed(), configured.model_id);
             println!("  {} {}", "Version:".dimmed(), configured.version);
             print_timeout(configured.timeout_secs);
+            print_model_source(&configured.model_source);
         }
         Err(e) if e.code() == Code::NotFound => {
             println!("{}", format!("{label}:").cyan().bold());

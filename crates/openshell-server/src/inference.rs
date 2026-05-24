@@ -78,12 +78,14 @@ impl Inference for InferenceService {
         let req = request.into_inner();
         let route_name = effective_route_name(&req.route_name)?;
         let verify = !req.no_verify;
+        let model_source = parse_request_model_source(&req.model_source)?;
         let route = upsert_cluster_inference_route(
             self.state.store.as_ref(),
             route_name,
             &req.provider_name,
             &req.model_id,
             req.timeout_secs,
+            model_source,
             verify,
         )
         .await?;
@@ -102,6 +104,7 @@ impl Inference for InferenceService {
             validation_performed: !route.validation.is_empty(),
             validated_endpoints: route.validation,
             timeout_secs: config.timeout_secs,
+            model_source: config.model_source.clone(),
         }))
     }
 
@@ -140,6 +143,7 @@ impl Inference for InferenceService {
             version: route.version,
             route_name: route_name.to_string(),
             timeout_secs: config.timeout_secs,
+            model_source: config.model_source.clone(),
         }))
     }
 }
@@ -150,6 +154,7 @@ async fn upsert_cluster_inference_route(
     provider_name: &str,
     model_id: &str,
     timeout_secs: u64,
+    model_source: openshell_core::inference::ModelSource,
     verify: bool,
 ) -> Result<UpsertedInferenceRoute, Status> {
     if provider_name.trim().is_empty() {
@@ -174,7 +179,7 @@ async fn upsert_cluster_inference_route(
         Vec::new()
     };
 
-    let config = build_cluster_inference_config(&provider, model_id, timeout_secs);
+    let config = build_cluster_inference_config(&provider, model_id, timeout_secs, model_source);
 
     // Fetch existing route to determine create vs. update path
     let existing = store
@@ -235,12 +240,33 @@ fn build_cluster_inference_config(
     provider: &Provider,
     model_id: &str,
     timeout_secs: u64,
+    model_source: openshell_core::inference::ModelSource,
 ) -> ClusterInferenceConfig {
     ClusterInferenceConfig {
         provider_name: provider.object_name().to_string(),
         model_id: model_id.to_string(),
         timeout_secs,
+        model_source: model_source.as_str().to_string(),
     }
+}
+
+/// Validate the `model_source` string from a `SetClusterInferenceRequest`.
+///
+/// Treats an empty string as "use the historical default" so legacy clients
+/// that have not been recompiled against the new proto field continue to work
+/// unchanged. Any non-empty value that does not match a known `ModelSource`
+/// token is rejected with `invalid_argument` so the operator sees a precise
+/// error rather than a silent fallback.
+fn parse_request_model_source(raw: &str) -> Result<openshell_core::inference::ModelSource, Status> {
+    use openshell_core::inference::ModelSource;
+    if raw.trim().is_empty() {
+        return Ok(ModelSource::default());
+    }
+    ModelSource::parse(raw).ok_or_else(|| {
+        Status::invalid_argument(format!(
+            "invalid model_source '{raw}'; expected one of router, caller, matching",
+        ))
+    })
 }
 
 struct ResolvedProviderRoute {
@@ -305,6 +331,10 @@ fn resolve_provider_route(provider: &Provider) -> Result<ResolvedProviderRoute, 
                 .map(|name| (*name).to_string())
                 .collect(),
             timeout: openshell_router::config::DEFAULT_ROUTE_TIMEOUT,
+            // Validation-time provider probe never reaches the model-source
+            // policy in the proxy path; use the default so callers don't
+            // need to thread the persisted policy through here.
+            model_source: openshell_router::config::ModelSource::default(),
         },
     })
 }
@@ -511,6 +541,7 @@ async fn resolve_route_by_name(
         protocols: resolved.route.protocols,
         provider_type: resolved.provider_type,
         timeout_secs: config.timeout_secs,
+        model_source: config.model_source.clone(),
     }))
 }
 
@@ -522,6 +553,7 @@ mod tests {
         Principal, SandboxIdentitySource, SandboxPrincipal, UserPrincipal,
     };
     use openshell_core::ObjectId;
+    use openshell_core::inference::ModelSource;
     use wiremock::matchers::{body_partial_json, header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -566,6 +598,7 @@ mod tests {
                 provider_name: provider_name.to_string(),
                 model_id: model_id.to_string(),
                 timeout_secs: 0,
+                model_source: String::new(),
             }),
             version: 0,
         }
@@ -630,6 +663,7 @@ mod tests {
             "openai-dev",
             "gpt-4o",
             0,
+            ModelSource::default(),
             false,
         )
         .await
@@ -642,6 +676,7 @@ mod tests {
             "openai-dev",
             "gpt-4.1",
             0,
+            ModelSource::default(),
             false,
         )
         .await
@@ -769,6 +804,7 @@ mod tests {
                 provider_name: "openai-dev".to_string(),
                 model_id: "test/model".to_string(),
                 timeout_secs: 0,
+                model_source: String::new(),
             }),
             version: 1,
         };
@@ -851,6 +887,7 @@ mod tests {
             "anthropic-dev",
             "claude-sonnet-4-20250514",
             0,
+            ModelSource::default(),
             false,
         )
         .await
@@ -931,6 +968,7 @@ mod tests {
             "openai-dev",
             "gpt-4o-mini",
             0,
+            ModelSource::default(),
             false,
         )
         .await
@@ -988,6 +1026,7 @@ mod tests {
             "openai-dev",
             "gpt-4o-mini",
             0,
+            ModelSource::default(),
             true,
         )
         .await
@@ -1028,6 +1067,7 @@ mod tests {
             "openai-dev",
             "gpt-4o-mini",
             0,
+            ModelSource::default(),
             true,
         )
         .await
@@ -1071,6 +1111,7 @@ mod tests {
             "openai-dev",
             "gpt-4o-mini",
             0,
+            ModelSource::default(),
             false,
         )
         .await
@@ -1126,6 +1167,7 @@ mod tests {
                 "openai-dev",
                 "gpt-4o",
                 0,
+                ModelSource::default(),
                 false,
             )
             .await
@@ -1139,6 +1181,7 @@ mod tests {
                 "openai-dev",
                 "gpt-4.1",
                 0,
+                ModelSource::default(),
                 false,
             )
             .await
@@ -1213,6 +1256,7 @@ mod tests {
             "openai-dev",
             "gpt-3.5",
             0,
+            ModelSource::default(),
             false,
         )
         .await
@@ -1227,6 +1271,7 @@ mod tests {
                 "openai-dev",
                 "gpt-4o",
                 0,
+                ModelSource::default(),
                 false,
             )
             .await
@@ -1240,6 +1285,7 @@ mod tests {
                 "openai-dev",
                 "gpt-4.1",
                 0,
+                ModelSource::default(),
                 false,
             )
             .await

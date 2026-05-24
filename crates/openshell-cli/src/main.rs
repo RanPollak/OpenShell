@@ -1094,6 +1094,18 @@ enum InferenceCommands {
         /// Request timeout in seconds for inference calls (0 = default 60s).
         #[arg(long, default_value_t = 0)]
         timeout: u64,
+
+        /// How the router treats the client-supplied `model` field.
+        ///
+        /// - `router` (default): preserve the historical behaviour and replace
+        ///   the client's `model` with `--model` before forwarding. A
+        ///   mismatch is logged at warn level.
+        /// - `caller`: forward the client's `model` unchanged so upstream
+        ///   "unknown model" errors propagate back to the caller (#994).
+        /// - `matching`: reject requests whose `model` differs from
+        ///   `--model`. Use this to enforce a single configured model.
+        #[arg(long, value_name = "POLICY")]
+        model_source: Option<String>,
     },
 
     /// Update gateway-level inference configuration (partial update).
@@ -1118,6 +1130,11 @@ enum InferenceCommands {
         /// Request timeout in seconds for inference calls (0 = default 60s, unchanged if omitted).
         #[arg(long)]
         timeout: Option<u64>,
+
+        /// Model-source policy (`router`, `caller`, `matching`). Unchanged if
+        /// omitted. See `inference set --help` for the semantics of each mode.
+        #[arg(long, value_name = "POLICY")]
+        model_source: Option<String>,
     },
 
     /// Get gateway-level inference provider and model.
@@ -2466,10 +2483,18 @@ async fn main() -> Result<()> {
                     system,
                     no_verify,
                     timeout,
+                    model_source,
                 } => {
                     let route_name = if system { "sandbox-system" } else { "" };
                     run::gateway_inference_set(
-                        endpoint, &provider, &model, route_name, no_verify, timeout, &tls,
+                        endpoint,
+                        &provider,
+                        &model,
+                        route_name,
+                        no_verify,
+                        timeout,
+                        model_source.as_deref(),
+                        &tls,
                     )
                     .await?;
                 }
@@ -2479,6 +2504,7 @@ async fn main() -> Result<()> {
                     system,
                     no_verify,
                     timeout,
+                    model_source,
                 } => {
                     let route_name = if system { "sandbox-system" } else { "" };
                     run::gateway_inference_update(
@@ -2488,6 +2514,7 @@ async fn main() -> Result<()> {
                         route_name,
                         no_verify,
                         timeout,
+                        model_source.as_deref(),
                         &tls,
                     )
                     .await?;
@@ -3394,6 +3421,50 @@ mod tests {
                 })
             })
         ));
+    }
+
+    #[test]
+    fn inference_set_accepts_model_source_flag() {
+        let cli = Cli::try_parse_from([
+            "openshell",
+            "inference",
+            "set",
+            "--provider",
+            "openai-dev",
+            "--model",
+            "gpt-4.1",
+            "--model-source",
+            "caller",
+        ])
+        .expect("inference set should parse --model-source");
+
+        let Some(Commands::Inference {
+            command: Some(InferenceCommands::Set { model_source, .. }),
+        }) = cli.command
+        else {
+            panic!("expected inference set command");
+        };
+        assert_eq!(model_source.as_deref(), Some("caller"));
+    }
+
+    #[test]
+    fn inference_update_accepts_model_source_flag() {
+        let cli = Cli::try_parse_from([
+            "openshell",
+            "inference",
+            "update",
+            "--model-source",
+            "matching",
+        ])
+        .expect("inference update should parse --model-source");
+
+        let Some(Commands::Inference {
+            command: Some(InferenceCommands::Update { model_source, .. }),
+        }) = cli.command
+        else {
+            panic!("expected inference update command");
+        };
+        assert_eq!(model_source.as_deref(), Some("matching"));
     }
 
     #[test]

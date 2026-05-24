@@ -36,6 +36,10 @@ message ClusterInferenceConfig {
   string model_id = 2;
   // Per-route request timeout in seconds. 0 means use default (60s).
   uint64 timeout_secs = 3;
+  // Policy controlling how the router treats the client-supplied `model`
+  // field. Empty string means the historical default (`router`); see
+  // `openshell::core::inference::ModelSource` for the full enum.
+  string model_source = 4;
 }
 
 // Storage envelope for the managed cluster inference route.
@@ -60,6 +64,12 @@ message SetClusterInferenceRequest {
   bool no_verify = 5;
   // Per-route request timeout in seconds. 0 means use default (60s).
   uint64 timeout_secs = 6;
+  // Policy controlling how the router treats the client-supplied `model`
+  // field. Accepts `router` (default, current behaviour), `caller`
+  // (forward the client's `model` unchanged), or `matching` (reject when
+  // the client's `model` differs from `model_id`). Empty string defers to
+  // the existing persisted value or the historical default.
+  string model_source = 7;
 }
 
 message ValidatedEndpoint {
@@ -79,6 +89,8 @@ message SetClusterInferenceResponse {
   repeated ValidatedEndpoint validated_endpoints = 6;
   // Per-route request timeout in seconds that was persisted.
   uint64 timeout_secs = 7;
+  // Persisted model-source policy. See `SetClusterInferenceRequest.model_source`.
+  string model_source = 8;
 }
 
 message GetClusterInferenceRequest {
@@ -95,6 +107,8 @@ message GetClusterInferenceResponse {
   string route_name = 4;
   // Per-route request timeout in seconds. 0 means default (60s).
   uint64 timeout_secs = 5;
+  // Persisted model-source policy. See `SetClusterInferenceRequest.model_source`.
+  string model_source = 6;
 }
 
 message GetInferenceBundleRequest {}
@@ -109,6 +123,10 @@ message ResolvedRoute {
   string provider_type = 6;
   // Per-route request timeout in seconds. 0 means use default (60s).
   uint64 timeout_secs = 7;
+  // Model-source policy threaded from the persisted ClusterInferenceConfig.
+  // Empty string means the historical default (`router`). See
+  // `openshell::core::inference::ModelSource` for the full enum.
+  string model_source = 8;
 }
 
 message GetInferenceBundleResponse {

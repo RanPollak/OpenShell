@@ -19,6 +19,8 @@ pub enum RouterError {
     RouteNotFound(String),
     #[error("no compatible route for protocol '{0}'")]
     NoCompatibleRoute(String),
+    #[error("invalid request: {0}")]
+    InvalidRequest(String),
     #[error("unauthorized: {0}")]
     Unauthorized(String),
     #[error("upstream unavailable: {0}")]
@@ -159,6 +161,7 @@ mod tests {
                 protocols: vec!["openai_chat_completions".to_string()],
                 api_key: Some("test-key".to_string()),
                 api_key_env: None,
+                model_source: None,
             }],
         }
     }
@@ -181,6 +184,7 @@ mod tests {
                 protocols: vec!["openai_chat_completions".to_string()],
                 api_key: None,
                 api_key_env: None,
+                model_source: None,
             }],
         };
         let err = Router::from_config(&config).unwrap_err();
